@@ -4,8 +4,9 @@
 
 <p align="center"><em>A calm, local-first e-paper photo frame. Your photos stay home.</em></p>
 
-Halcyon Frame is open firmware for the **Waveshare ESP32-S3-PhotoPainter**, a 7.3" six-colour e-paper
-frame. It replaces the vendor's cloud firmware with one that runs entirely on the frame:
+Halcyon Frame is open firmware for the
+**[Waveshare ESP32-S3-PhotoPainter](https://www.waveshare.com/esp32-s3-photopainter.htm)**, a 7.3" six-colour
+e-paper frame (sold by Waveshare and its resellers). It replaces the vendor's cloud firmware with one that runs entirely on the frame:
 
 - **A web page served by the frame itself.** Add photos from your phone or computer and the browser crops,
   colour-maps and dithers them for the panel. Batch-upload hundreds of photos at once.

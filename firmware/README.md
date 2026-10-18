@@ -1,6 +1,6 @@
 # Halcyon Frame firmware
 
-Firmware for the Waveshare ESP32-S3-PhotoPainter (7.3" Spectra 6 e-paper). Not affiliated with Waveshare.
+Firmware for the [Waveshare ESP32-S3-PhotoPainter](https://www.waveshare.com/esp32-s3-photopainter.htm) (7.3" Spectra 6 e-paper). Not affiliated with Waveshare.
 
 A local-first replacement for the vendor firmware. The frame runs its own web UI and keeps settings and photos on the TF card. There's no account and no cloud storage, and photos never leave your network. With **automatic setup** on (the default), the frame contacts `pool.ntp.org` for the time and `ip-api.com` for the time zone and a city-level location; turn it off in Settings and the frame makes no internet requests at all. Unlike the vendor firmware, there's no AI image generation or voice assistant.
 

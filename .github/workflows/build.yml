@@ -64,3 +64,5 @@ jobs:
             SHA256SUMS
             THIRD_PARTY_NOTICES.md
           generate_release_notes: true
+          # v1.2.0-rc.1 and similar publish as pre-releases, which the website's installer ignores.
+          prerelease: ${{ contains(github.ref_name, '-') }}
