@@ -32,7 +32,16 @@ typedef struct {
     line_t intro[2];
     step_t steps[2];
     const char *footer; // on a yellow band at the bottom
+    const char *note;   // small line just above the footer (firmware version on the start-up screen)
 } doc_t;
+
+// Titles, footers and notes use the Clean typeface (Inter): friendlier than the bitmap terminal font,
+// which stays for the dense instruction lines where its even widths make addresses easy to read.
+#define TITLE_FONT (TYPEFACES[0].value[0])  // Inter Medium 46
+#define TITLE_LINE 56
+#define FOOTER_FONT (TYPEFACES[0].date_port) // Inter Regular 34
+#define FOOTER_LINE 40
+#define NOTE_FONT (TYPEFACES[0].sub[0])     // Inter Regular 21
 
 #define LINE_BODY 38 // 32 px glyphs plus spacing
 #define LINE_BIG 68
@@ -69,6 +78,33 @@ static int text_block(canvas_t *c, bool draw, int x, int y, int w, const font_t 
     return h;
 }
 
+// Word-wrapped proportional text; y is the top of the first line. Returns the height used.
+static int ptext_block(canvas_t *c, bool draw, int x, int y, int w, const pfont_t *f, int lh, uint8_t color,
+                       const char *s) {
+    char buf[160];
+    int h = 0;
+    while (*s) {
+        while (*s == ' ') s++;
+        if (!*s) break;
+        size_t len = strlen(s), fit = 0, brk = 0;
+        for (size_t i = 1; i <= len && i < sizeof(buf); i++) {
+            if ((s[i] & 0xC0) == 0x80) continue;
+            memcpy(buf, s, i);
+            buf[i] = 0;
+            if (gfx_pwidth(f, buf, 0) > w) break;
+            fit = i;
+            if (s[i] == ' ' || s[i] == 0) brk = i;
+        }
+        size_t take = brk ? brk : fit ? fit : 1;
+        memcpy(buf, s, take);
+        buf[take] = 0;
+        if (draw) gfx_ptext(c, x, y + h + f->ascent, f, buf, color, 0);
+        h += lh;
+        s += take;
+    }
+    return h;
+}
+
 static int draw_line(canvas_t *c, bool draw, int x, int y, int w, line_t l) {
     // Big text falls back to body size (wrapped) when a long name won't fit on one line.
     if (l.style == ST_BIG && gfx_text_width(&font_32x64, l.text) <= w) {
@@ -97,21 +133,25 @@ static bool layout(canvas_t *c, const doc_t *d, bool draw, int shrink) {
 
     int bottom = c->h;
     if (d->footer) {
-        int fh = text_block(c, false, m, 0, w, &font_16x32, LINE_BODY, 0, d->footer) + 20;
+        int fh = ptext_block(c, false, m, 0, w, FOOTER_FONT, FOOTER_LINE, 0, d->footer) + 18;
         bottom -= fh;
         if (draw) {
             gfx_rect(c, 0, bottom, c->w, fh, EPD_YELLOW);
-            text_block(c, true, m, bottom + 12, w, &font_16x32, LINE_BODY, EPD_BLACK, d->footer);
+            ptext_block(c, true, m, bottom + 6, w, FOOTER_FONT, FOOTER_LINE, EPD_BLACK, d->footer);
         }
+    }
+    if (d->note) {
+        bottom -= 34;
+        if (draw) gfx_ptext(c, m, bottom + 6 + NOTE_FONT->ascent, NOTE_FONT, d->note, EPD_BLACK, 0);
     }
 
     int tw = w - (d->check ? 80 : 0);
-    int th = text_block(c, draw, m, y, tw, &font_32x64, LINE_BIG, EPD_BLACK, d->title);
+    int th = ptext_block(c, draw, m, y, tw, TITLE_FONT, TITLE_LINE, EPD_BLACK, d->title);
     if (d->check && draw) {
-        int last = gfx_text_width(&font_32x64, d->title);
-        draw_check(c, m + (last < tw ? last : tw) + 20, y + th - LINE_BIG + 4);
+        int last = gfx_pwidth(TITLE_FONT, d->title, 0);
+        draw_check(c, m + (last < tw ? last : tw) + 20, y + th - TITLE_LINE);
     }
-    y += th + 12;
+    y += th + 16;
 
     for (int i = 0; i < 2 && d->intro[i].text; i++) y += draw_line(c, draw, m, y, w, d->intro[i]);
     if (d->intro[0].text) y += 12;
@@ -244,12 +284,9 @@ bool screen_render(screen_t s, const screen_info_t *in, uint8_t *buf) {
         d.title = "How to reach me";
         // Start-up screen: say which firmware is running and how an update went, and that photos follow.
         snprintf(fw, sizeof(fw), "Firmware %s", in->fw_version ? in->fw_version : "?");
-        if (in->boot && in->update_result) {
+        if (in->boot && in->update_result)
             d.intro[0] = (line_t) {in->update_msg, in->update_result == 1 ? ST_GREEN : ST_RED};
-            d.intro[1] = (line_t) {in->update_result == 1 ? NULL : fw, ST_BODY};
-        } else {
-            d.intro[0] = (line_t) {fw, ST_BODY};
-        }
+        d.note = fw;
         d.footer = in->boot ? "Shows 60 s at start-up, then your photos." : "Press BOOT for the next photo.";
         break;
     }

@@ -153,7 +153,7 @@ After the first USB flash, there's no need for a cable:
 - **Web:** Settings → Firmware → choose `halcyonframe.bin` from a [release](https://github.com/halcyonframe/halcyonframe/releases) → Install. It takes about 30 s, then the frame restarts.
 - **TF card:** copy `halcyonframe.bin` to the card root as `firmware.bin` and restart the frame (or power it on). It's renamed to `firmware.done`, or `firmware.failed` if it wasn't valid.
 
-While installing, the panel shows **"Updating firmware"** with the installed and incoming versions. After the
+While installing, the panel shows **"Updating firmware"** with the installed and incoming versions, and keeps it up for 30 seconds before restarting so it can be read. After the
 restart, the start screen shows the firmware version and whether the update worked, or that it rolled back.
 
 The image goes into the inactive app slot (two 6 MB slots; `partitions.csv`) and is checked before the frame switches to it. A new firmware has to reach a working web UI (or its first deep sleep) to confirm itself. If it resets before that, the bootloader goes back to the previous firmware. A new firmware that *hangs* without resetting needs a power cycle (hold PWR 4 s, then press it) to trigger the rollback.

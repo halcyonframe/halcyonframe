@@ -38,6 +38,7 @@ static const char *TAG = "main";
 #define CRITICAL_RECHECK_MIN (6 * 60)
 #define BOOT_INFO_MS 60000 // after a reset, the info screen stays up until this point, then the photo returns
 #define KEY_HOLD_MS 2000
+#define UPDATE_READ_MS 30000 // "Updating firmware" stays up this long after it's drawn, so it can be read
 #define FAULT_BACKOFF_MIN 30 // after repeated crashes or brownouts, rest this long before trying again
 #define FAULT_MAGIC 0x46415554
 
@@ -263,6 +264,8 @@ static void awake_loop(void) {
         if (want_reboot) {
             vTaskDelay(pdMS_TO_TICKS(500)); // let the HTTP response flush
             while (display_busy() || storage_writing() || ota_busy()) vTaskDelay(pdMS_TO_TICKS(200));
+            // The update screen takes ~20 s to draw; restarting the moment it's done gives nobody time to read it.
+            if (display_shown_screen() == SCR_UPDATE) vTaskDelay(pdMS_TO_TICKS(UPDATE_READ_MS));
             esp_restart();
         }
         // The reset info screen has had its minute: back to the photo (unless someone moved on already).
@@ -327,7 +330,10 @@ void app_main(void) {
         gpio_set_level(PIN_LED_GREEN, 0);
         bool installed = ota_from_card();
         gpio_set_level(PIN_LED_GREEN, 1);
-        if (installed) esp_restart();
+        if (installed) {
+            vTaskDelay(pdMS_TO_TICKS(UPDATE_READ_MS)); // the update screen (drawn before installing) stays readable
+            esp_restart();
+        }
     }
 
     esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
