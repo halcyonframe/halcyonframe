@@ -23,14 +23,17 @@ jobs:
         with:
           fetch-depth: 0 # full history so `git describe` gives the firmware its version string
           persist-credentials: false
+      # ESP-IDF takes the firmware version from version.txt when present. Writing it here, outside the build
+      # container, avoids git's "dubious ownership" refusal inside it.
+      - name: Version
+        run: git describe --tags --always --dirty > firmware/version.txt && cat firmware/version.txt
       - name: Build
         uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
         with:
           esp_idf_version: v5.5.1
           target: esp32s3
           path: firmware
-          # The container runs as another user; without this git refuses to describe the checkout.
-          command: git config --global --add safe.directory '*' && idf.py build && cd build && esptool.py --chip esp32s3 merge_bin -o halcyonframe-full.bin @flash_args
+          command: idf.py build && cd build && esptool.py --chip esp32s3 merge_bin -o halcyonframe-full.bin @flash_args
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: firmware
