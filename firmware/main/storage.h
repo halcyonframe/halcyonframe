@@ -51,6 +51,10 @@ void storage_space(uint64_t *total, uint64_t *free_bytes);
 
 void config_load(void); // falls back to defaults and writes the file if it is missing
 bool config_save(void);
+// Held around read-modify-write of g_cfg plus config_save(): the web server and the auto-setup task both
+// change settings.
+void config_lock(void);
+void config_unlock(void);
 bool wifi_pass_valid(const char *pass); // empty, 8-63 chars, or 64 hex digits
 
 bool photo_id_valid(const char *id);
@@ -64,5 +68,6 @@ orient_t photo_orient(const char *id);
 // have the wrong size, e.g. copied by hand or cut short. Stats every file, so call it sparingly.
 int photo_scan(orient_t o, int *bad);
 int photo_bad_count(void); // from the last photo_scan()
+int photo_count(orient_t o); // photos for orientation o, by name only: cheap, used on every wake
 bool photo_load(const char *id, uint8_t *buf);
 bool photo_delete(const char *id);

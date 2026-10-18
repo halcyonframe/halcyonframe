@@ -13,7 +13,7 @@
 
 static const char *TAG = "wifi";
 #define GOT_IP BIT0
-#define STA_CONNECT_TIMEOUT_MS 20000
+#define STA_CONNECT_TIMEOUT_MS 30000 // slow DHCP servers exist; giving up drops the frame to its hotspot
 
 static EventGroupHandle_t events;
 static esp_netif_t *netif;
@@ -142,8 +142,7 @@ int wifi_scan(void) {
 }
 
 int wifi_networks(const wifi_net_t **out) {
-    if (n_nets < 0) wifi_scan();
-    *out = nets;
+    *out = nets; // cached only: scanning is an explicit request (POST /api/wifi/scan)
     return n_nets < 0 ? 0 : n_nets;
 }
 

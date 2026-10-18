@@ -19,7 +19,7 @@ typedef struct {
 #define WIFI_SCAN_MAX 20
 
 // Nearby networks for the settings page, strongest first, one entry per name, hidden ones left out.
-// wifi_networks() returns the cached list (scanning on first use); wifi_scan() refreshes it. A scan takes
+// wifi_networks() returns the cached list (empty until a scan); wifi_scan() refreshes it. A scan takes
 // ~2 s and briefly interrupts clients of the frame's own hotspot.
 int wifi_networks(const wifi_net_t **out);
 int wifi_scan(void);

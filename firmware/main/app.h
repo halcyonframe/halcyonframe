@@ -10,3 +10,4 @@ void app_schedule_changed(void);   // settings or clock changed: recompute the n
 time_t app_next_photo(void);       // next scheduled photo change (0 = none), for the status screen
 void app_show_status(void);        // put the status screen up now (web UI preview of typeface/cards)
 bool app_boot_screen(void);        // the start-up info screen is (still) up
+void app_rescan_photos(void);      // recount broken photo files in the background

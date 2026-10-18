@@ -9,7 +9,8 @@ frame. It replaces the vendor's cloud firmware with one that runs entirely on th
 
 - **A web page served by the frame itself.** Add photos from your phone or computer and the browser crops,
   colour-maps and dithers them for the panel. Batch-upload hundreds of photos at once.
-- **Photos and settings on the TF card.** No account, no app, no subscription, no cloud.
+- **Photos and settings on the TF card.** No account, no app, no subscription, no cloud storage. Optional
+  automatic setup asks `pool.ntp.org` for the time and `ip-api.com` for your time zone; one switch turns it off.
 - **A status screen** in seven typefaces: clock, indoor temperature and humidity (with a mold-risk flag),
   battery, storage, sunrise/sunset, moon, daylight. Four configurable cards.
 - **Calm by design.** E-paper keeps its picture with no power, so the frame sleeps between changes and
@@ -19,8 +20,9 @@ frame. It replaces the vendor's cloud firmware with one that runs entirely on th
 ## Install
 
 The easiest way is the **[browser installer at halcyonframe.com](https://halcyonframe.com)**. Plug the frame
-into a computer with USB-C, open the page in Chrome or Edge, and click Install. It works on a frame fresh out
-of the box (with Waveshare's firmware) and on one that needs rescuing.
+into a computer with USB-C, open the page in Chrome or Edge, and click Install. It's meant for a frame fresh
+out of the box (still on Waveshare's firmware) and for one that needs rescuing. This is a first release, so
+please [report](https://github.com/halcyonframe/halcyonframe/issues) anything that doesn't go smoothly.
 
 Or flash a [release](https://github.com/halcyonframe/halcyonframe/releases) with esptool:
 
@@ -44,7 +46,7 @@ Every push is built by GitHub Actions, and tags publish releases.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Typefaces are under the SIL Open Font License; GeoNames data is CC BY 4.0
-(see the [credits](firmware/README.md#credits)).
+MIT, see [LICENSE](LICENSE). Third-party components and their licenses are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 <sub>Not affiliated with Waveshare. "PhotoPainter" is Waveshare's product name.</sub>

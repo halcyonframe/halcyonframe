@@ -52,7 +52,7 @@
 
 #endif //ESP_PLATFORM
 
-// PhotoFrame patch: was 400000. The PhotoPainter's I2C bus has 10k pull-ups and five chips on it; at 400 kHz
+// Halcyon Frame patch: was 400000. The PhotoPainter's I2C bus has 10k pull-ups and five chips on it; at 400 kHz
 // the edges are too slow and reads NACK intermittently. PMIC reads are tiny, so 100 kHz costs nothing.
 #define XPOWERSLIB_I2C_MASTER_SPEED            100000
 
@@ -317,7 +317,7 @@ public:
                     1,
                     buf,
                     length,
-                    // PhotoFrame patch: upstream passes -1 (wait forever); one wedged transaction then hangs
+                    // Halcyon Frame patch: upstream passes -1 (wait forever); one wedged transaction then hangs
                     // every task that touches the PMIC, including the web server. The new driver takes ms.
                     1000 /* ms */)) {
             return 0;
@@ -364,7 +364,7 @@ public:
                     __i2c_device,
                     write_buffer,
                     length + 1,
-                    1000 /* ms */)) { // PhotoFrame patch: was -1 (see above)
+                    1000 /* ms */)) { // Halcyon Frame patch: was -1 (see above)
             free(write_buffer);
             return -1;
         }

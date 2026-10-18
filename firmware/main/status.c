@@ -220,7 +220,8 @@ static void fill_card(card_view_t *v, card_t k, const screen_info_t *in, bool tw
         double tf = in->temp_c * 9 / 5 + 32, feels = feels_like_f(tf, in->rh);
         double shown = in->fahrenheit ? tf : in->temp_c, feels_shown = in->fahrenheit ? feels : (feels - 32) * 5 / 9;
         snprintf(v->value, MAX_LINE, "%.0f\xC2\xB0", shown);
-        if (fabs(round(feels_shown) - round(shown)) >= 1) // only worth saying when it differs
+        // The heat index only means something from about 80 F up; below that it just adds noise.
+        if (tf >= 80 && fabs(round(feels_shown) - round(shown)) >= 1)
             snprintf(v->aside, sizeof(v->aside), "feels %.0f\xC2\xB0", feels_shown);
         snprintf(v->sub, MAX_LINE, "%.0f%% humidity", in->rh);
         break;
@@ -338,7 +339,7 @@ void status_render(canvas_t *c, const screen_info_t *in) {
         setup |= v[i].needs_setup;
     }
     // Something only the web page can fix (location, clock): put its address beside the clock as a QR code.
-    if (setup && in->ip) {
+    if (setup && in->ip && strcmp(in->ip, "0.0.0.0")) { // no address on quiet (Wi-Fi off) wakes
         char url[48];
         snprintf(url, sizeof(url), "http://%s/", in->ip);
         int mod = land ? 4 : 3, size = gfx_qr(NULL, 0, 0, mod, url), qx = W - m - size + 12, qy = land ? 14 : 10;

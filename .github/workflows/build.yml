@@ -2,9 +2,10 @@
 #   halcyonframe.bin       app image: install from the frame's Settings > Firmware, or as firmware.bin on the card
 #   halcyonframe-full.bin  bootloader + partitions + app at offset 0: USB / web installer for new or bricked frames
 #
-# People flash these files onto their frames, so the supply chain is locked down: actions are pinned to commit
+# People flash these files onto their frames, so the workflow is kept tight: actions are pinned to commit
 # SHAs (Dependabot proposes updates), the build job can only read, and only the tag-triggered release job can
-# write to the repo.
+# write to the repo. Not pinned: the espressif/idf:v5.5.1 build image, which the ESP-IDF action pulls by tag.
+# Releases include SHA256SUMS so downloads can be checked.
 name: build
 on:
   push:
@@ -33,13 +34,15 @@ jobs:
           esp_idf_version: v5.5.1
           target: esp32s3
           path: firmware
-          command: idf.py build && cd build && esptool.py --chip esp32s3 merge_bin -o halcyonframe-full.bin @flash_args
+          # The notices go next to the binaries so the artifact is flat (the release job expects plain names).
+          command: idf.py build && cp ../THIRD_PARTY_NOTICES.md build/ && cd build && esptool.py --chip esp32s3 merge_bin -o halcyonframe-full.bin @flash_args
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: firmware
           path: |
             firmware/build/halcyonframe.bin
             firmware/build/halcyonframe-full.bin
+            firmware/build/THIRD_PARTY_NOTICES.md
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -51,9 +54,13 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: firmware
+      - name: Checksums
+        run: sha256sum halcyonframe.bin halcyonframe-full.bin > SHA256SUMS && cat SHA256SUMS
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
             halcyonframe.bin
             halcyonframe-full.bin
+            SHA256SUMS
+            THIRD_PARTY_NOTICES.md
           generate_release_notes: true

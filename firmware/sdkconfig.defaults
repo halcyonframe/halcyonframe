@@ -24,3 +24,9 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 # A new firmware must confirm it works (ota_mark_good) before its first reset, else the bootloader goes
 # back to the previous one.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Power: the bootloader would otherwise SHA-256 the whole ~2 MB app on every deep-sleep wake. Images are
+# still verified on normal boots and when an update is installed.
+CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP=y
+# Release builds: smaller and faster to wake than the default debug optimisation.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y

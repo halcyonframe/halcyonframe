@@ -20,17 +20,8 @@ FAMILIES = {
     # Old-style figures dip below the line; lining figures keep the clock level.
     "EB Garamond": {"file": "EBGaramond.ttf", "time": "Regular", "date": "Regular", "value": "Medium",
                     "label": "SemiBold", "features": ["lnum"]},
-    "Manrope": {"file": "Manrope.ttf", "time": "Light", "date": "Medium", "value": "SemiBold", "label": "Bold"},
-    # Candidates to replace Manrope (preview only)
     "Outfit": {"file": "Outfit.ttf", "time": "Light", "date": "Regular", "value": "Medium"},
-    "Sora": {"file": "Sora.ttf", "time": "Light", "date": "Regular", "value": "SemiBold"},
-    "DM Sans": {"file": "DMSans.ttf", "time": "Light", "date": "Regular", "value": "Medium"},
     "Figtree": {"file": "Figtree.ttf", "time": "Light", "date": "Regular", "value": "Medium"},
-    "Plus Jakarta Sans": {"file": "PlusJakartaSans.ttf", "time": "Light", "date": "Regular", "value": "SemiBold"},
-    "Work Sans": {"file": "WorkSans.ttf", "time": "Light", "date": "Regular", "value": "Medium"},
-    "Nunito Sans": {"file": "NunitoSans.ttf", "time": "Light", "date": "Regular", "value": "SemiBold"},
-    "Lexend": {"file": "Lexend.ttf", "time": "Light", "date": "Regular", "value": "Medium"},
-    "Bricolage Grotesque": {"file": "BricolageGrotesque.ttf", "time": "Light", "date": "Regular", "value": "Medium"},
     "JetBrains Mono": {"file": "JetBrainsMono.ttf", "time": "Light", "date": "Regular", "value": "Medium",
                        "label": "Bold"},
 }

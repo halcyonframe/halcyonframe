@@ -38,6 +38,8 @@ static const char *TAG = "main";
 #define CRITICAL_RECHECK_MIN (6 * 60)
 #define BOOT_INFO_MS 60000 // after a reset, the info screen stays up until this point, then the photo returns
 #define KEY_HOLD_MS 2000
+#define FAULT_BACKOFF_MIN 30 // after repeated crashes or brownouts, rest this long before trying again
+#define FAULT_MAGIC 0x46415554
 
 // 32-bit ms so it is read/written atomically across cores (wraps after ~49 days; unsigned math handles it)
 static atomic_uint last_activity_ms;
@@ -46,6 +48,10 @@ static bool boot_info_pending; // info screen shown at reset, photo not yet rest
 static volatile bool reschedule; // settings or clock changed: recompute the next photo change
 // Schedule state (next change, status screen timing) must survive deep sleep.
 static RTC_DATA_ATTR sched_t sched;
+// Consecutive abnormal resets (brownout, panic, watchdog). RTC_NOINIT survives those resets; the magic
+// value rejects power-on garbage.
+static RTC_NOINIT_ATTR uint32_t fault_magic, fault_count;
+static bool healthy = true; // false while backing off: no panel refreshes, and a crashing new firmware must not be kept
 
 static uint32_t now_ms(void) { return (uint32_t) (esp_timer_get_time() / 1000); }
 void app_touch(void) { atomic_store(&last_activity_ms, now_ms()); }
@@ -107,13 +113,30 @@ static void sched_settings(void) {
     sched.quiet_start = qs < 0 || qe < 0 ? 0 : qs, sched.quiet_end = qs < 0 || qe < 0 ? 0 : qe;
     sched.status_every = g_cfg.status_every;
     sched.status_min = g_cfg.status_min;
-    if (reschedule) sched.next_photo = 0, reschedule = false;
+    if (reschedule) {
+        // Settings changed or the clock jumped (browser, NTP): drop timing state that may now point hours
+        // into the future or past, so photo changes and status slots carry on from the new time.
+        time_t now = time(NULL);
+        sched.next_photo = 0;
+        if (sched.status_until > now + g_cfg.status_min * 60) sched.status_until = now;
+        if (sched.last_slot > now) sched.last_slot = 0;
+        reschedule = false;
+    }
     if (!sched.next_photo) sched.next_photo = sched_next_change(&sched, time(NULL));
 }
 
-static bool have_photos(void) {
+static bool have_photos(void) { return storage_ok() && photo_count(g_cfg.orientation) > 0; }
+
+// Counting broken photo files means opening every one: far too slow for the wake path with thousands of
+// photos, so it runs once in the background while awake (for the web UI's warning banner).
+static void bad_scan_task(void *arg) {
     int bad;
-    return storage_ok() && photo_scan(g_cfg.orientation, &bad) > 0;
+    photo_scan(g_cfg.orientation, &bad);
+    if (bad) ESP_LOGW(TAG, "%d photo file(s) have the wrong size and will be skipped", bad);
+    vTaskDelete(NULL);
+}
+void app_rescan_photos(void) {
+    if (storage_ok()) xTaskCreate(bad_scan_task, "scan", 4096, NULL, 1, NULL);
 }
 
 // Status screen up for status_min minutes (timed slot or a KEY press).
@@ -178,10 +201,10 @@ static void deep_sleep(int64_t wake_s) {
     while (display_busy() || storage_writing() || ota_busy()) vTaskDelay(pdMS_TO_TICKS(200));
     // Waking from sleep is a reset: a new firmware that got this far must confirm itself first, or the
     // bootloader would roll it back on the next wake.
-    ota_mark_good();
+    if (healthy) ota_mark_good();
     // These screens only make sense while someone is interacting; put the photo back before sleeping.
     screen_t s = display_shown_screen();
-    if ((s == SCR_WIFI_FAIL || s == SCR_INFO) && have_photos()) restore_photo(false);
+    if (healthy && (s == SCR_WIFI_FAIL || s == SCR_INFO) && have_photos()) restore_photo(false);
     if (wifi_up) wifi_stop();
     gpio_set_level(PIN_LED_RED, 1);
     gpio_set_level(PIN_LED_GREEN, 1);
@@ -202,8 +225,7 @@ static void deep_sleep(int64_t wake_s) {
 
 // What the panel should show once any boot-time screen is done. First match wins (see screens.h).
 static void show_normal(void) {
-    int bad, photos = photo_scan(g_cfg.orientation, &bad);
-    if (bad) ESP_LOGW(TAG, "%d photo file(s) have the wrong size and will be skipped", bad);
+    int photos = photo_count(g_cfg.orientation);
     if (g_cfg.wifi_ssid[0] && wifi_is_ap()) display_request_screen(SCR_WIFI_FAIL);
     else if (!photos) display_request_screen(wifi_is_ap() ? SCR_SETUP : SCR_READY);
     // After power-on we don't know what's on the panel (often the vendor firmware's last image).
@@ -287,6 +309,18 @@ void app_main(void) {
              ota_version());
     if (why != ESP_RST_DEEPSLEEP) sched = (sched_t) {0}; // RTC memory is only meaningful across deep sleep
 
+    // A brownout during a refresh at low battery, or a crash, followed by the full start-up (Wi-Fi + two
+    // panel refreshes) would likely trip it again. After two in a row, rest instead of looping.
+    bool fault = why == ESP_RST_BROWNOUT || why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT ||
+                 why == ESP_RST_WDT;
+    if (fault_magic != FAULT_MAGIC) fault_magic = FAULT_MAGIC, fault_count = 0;
+    fault_count = fault ? fault_count + 1 : 0;
+    if (fault_count >= 2) {
+        ESP_LOGE(TAG, "%u abnormal resets in a row: resting %d min", (unsigned) fault_count, FAULT_BACKOFF_MIN);
+        healthy = false;
+        deep_sleep(FAULT_BACKOFF_MIN * 60);
+    }
+
     // firmware.bin on the card: install and restart into it. Not on a nearly empty battery, where power
     // could fail mid-write (the old firmware would still boot, but there's no point trying).
     if (sd && pmic_battery_level() != BATT_CRITICAL) {
@@ -341,6 +375,7 @@ void app_main(void) {
         else clock_start_ntp(g_cfg.ntp_server);
     }
     web_start();
+    app_rescan_photos();
     ota_mark_good(); // Wi-Fi and the web UI came up: this firmware is good enough to keep
 
     if (sd) {

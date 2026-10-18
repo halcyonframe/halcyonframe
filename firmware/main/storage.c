@@ -12,6 +12,8 @@
 #include "driver/sdmmc_host.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "esp_mac.h"
 #include "bootloader_random.h"
 #include "esp_random.h"
@@ -21,6 +23,13 @@
 static const char *TAG = "storage";
 
 config_t g_cfg;
+static SemaphoreHandle_t cfg_lock; // recursive: config_save() takes it too
+
+void config_lock(void) {
+    if (!cfg_lock) cfg_lock = xSemaphoreCreateRecursiveMutex();
+    xSemaphoreTakeRecursive(cfg_lock, portMAX_DELAY);
+}
+void config_unlock(void) { xSemaphoreGiveRecursive(cfg_lock); }
 static sdmmc_card_t *card;
 static card_state_t card_state = CARD_MISSING;
 static atomic_int writers;
@@ -86,6 +95,7 @@ void storage_space(uint64_t *total, uint64_t *free_bytes) {
 
 /* ---- config.txt: plain key=value lines so it can also be edited by hand on a PC ---- */
 
+#define CONFIG_KEYS 28 // keys config_write() emits; a stale count only costs one extra save
 #define OLD_SHARED_AP_PASS "photoframe" // every frame used this before per-frame passwords
 
 // Per-frame hotspot password. It's shown on the setup screen with a join QR code, so being random costs
@@ -133,8 +143,8 @@ static void config_defaults(void) {
 
 const char *const ORIENT_NAMES[3] = {"landscape", "cw", "ccw"};
 
-#define SET_STR(field) if (!strcmp(key, #field)) { snprintf(g_cfg.field, sizeof(g_cfg.field), "%s", val); continue; }
-#define SET_INT(field) if (!strcmp(key, #field)) { g_cfg.field = atoi(val); continue; }
+#define SET_STR(field) if (!strcmp(key, #field)) { snprintf(g_cfg.field, sizeof(g_cfg.field), "%s", val); seen++; continue; }
+#define SET_INT(field) if (!strcmp(key, #field)) { g_cfg.field = atoi(val); seen++; continue; }
 
 void config_load(void) {
     config_defaults();
@@ -148,6 +158,7 @@ void config_load(void) {
         return;
     }
     char line[160];
+    int seen = 0; // keys present; fewer than CONFIG_KEYS means the file predates some setting
     while (fgets(line, sizeof(line), f)) {
         line[strcspn(line, "\r\n")] = 0;
         char *eq = strchr(line, '='); // split on the first '=' so passwords may contain '='
@@ -160,29 +171,39 @@ void config_load(void) {
         SET_INT(status_every) SET_INT(status_min) SET_INT(key_status) SET_INT(typeface)
         SET_STR(cards) SET_STR(zip) SET_STR(lat) SET_STR(lon) SET_INT(auto_setup)
         SET_STR(geo_zone) SET_STR(geo_lat) SET_STR(geo_lon)
-        if (!strcmp(key, "orientation"))
+        if (!strcmp(key, "orientation") && ++seen)
             for (int i = 0; i < 3; i++)
                 if (!strcmp(val, ORIENT_NAMES[i])) g_cfg.orientation = (orient_t) i;
     }
     fclose(f);
-    // One-time upgrade from the old shared hotspot defaults. The hostname is left alone on purpose: changing
-    // it would break the photoframe.local address people already use.
-    bool upgraded = false;
-    if (!strcmp(g_cfg.ap_pass, OLD_SHARED_AP_PASS)) random_ap_pass(g_cfg.ap_pass), upgraded = true;
-    if (!strcmp(g_cfg.ap_ssid, "PhotoFrame"))
-        unique_name(g_cfg.ap_ssid, sizeof(g_cfg.ap_ssid), "Halcyon", true), upgraded = true;
-    if (upgraded) {
-        ESP_LOGW(TAG, "hotspot is now \"%s\" with a per-frame password", g_cfg.ap_ssid);
-        config_save();
-    }
     if (g_cfg.interval_min < 0) g_cfg.interval_min = 0;
     if (g_cfg.awake_min < 0) g_cfg.awake_min = 0;
     if (g_cfg.status_every != 30 && g_cfg.status_every != 60) g_cfg.status_every = 0;
-    if (g_cfg.status_min < 1) g_cfg.status_min = 1;
+    // Same ranges as the web UI: a hand-edited huge value would overflow the minutes-to-seconds maths.
+    g_cfg.status_min = g_cfg.status_min < 1 ? 1 : g_cfg.status_min > 30 ? 30 : g_cfg.status_min;
+    if (g_cfg.interval_min > 10080) g_cfg.interval_min = 10080;
+    if (g_cfg.awake_min > 1440) g_cfg.awake_min = 1440;
+
+    // Write the file back when it lacked settings, so defaults (notably the random hotspot password) are
+    // kept rather than regenerated on every boot. Also a one-time upgrade from the old shared hotspot
+    // defaults; the hostname is left alone, since changing it would break the address people already use.
+    bool save = seen < CONFIG_KEYS;
+    if (!strcmp(g_cfg.ap_pass, OLD_SHARED_AP_PASS)) random_ap_pass(g_cfg.ap_pass), save = true;
+    if (!strcmp(g_cfg.ap_ssid, "PhotoFrame")) unique_name(g_cfg.ap_ssid, sizeof(g_cfg.ap_ssid), "Halcyon", true), save = true;
+    if (save) config_save();
 }
+
+static bool config_write(void);
 
 bool config_save(void) {
     if (!card) return false;
+    config_lock();
+    bool ok = config_write();
+    config_unlock();
+    return ok;
+}
+
+static bool config_write(void) {
     storage_write_begin();
     FILE *f = fopen(CONFIG_PATH ".tmp", "w");
     if (!f) {
@@ -257,6 +278,10 @@ int photo_list(char (*ids)[PHOTO_ID_MAX], int max) {
     while ((e = readdir(d)) != NULL) {
         char *dot = strrchr(e->d_name, '.');
         if (!dot || strcasecmp(dot, ".epd") != 0 || dot - e->d_name >= PHOTO_ID_MAX) continue;
+        char id[PHOTO_ID_MAX];
+        memcpy(id, e->d_name, dot - e->d_name);
+        id[dot - e->d_name] = 0;
+        if (!photo_id_valid(id)) continue; // hand-copied files with other names: not ours, and unsafe in JSON
         if (ids) {
             if (n >= max) break;
             memcpy(ids[n], e->d_name, dot - e->d_name);
@@ -278,6 +303,24 @@ orient_t photo_orient(const char *id) {
 
 static int last_bad;
 int photo_bad_count(void) { return last_bad; }
+
+// Directory listing only (no per-file stat), so it's cheap enough for every wake even with thousands of photos.
+int photo_count(orient_t o) {
+    DIR *d = card ? opendir(PHOTO_DIR) : NULL;
+    if (!d) return 0;
+    int n = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        char *dot = strrchr(e->d_name, '.');
+        if (!dot || strcasecmp(dot, ".epd") || dot - e->d_name >= PHOTO_ID_MAX) continue;
+        char id[PHOTO_ID_MAX];
+        memcpy(id, e->d_name, dot - e->d_name);
+        id[dot - e->d_name] = 0;
+        if (photo_id_valid(id) && photo_orient(id) == o) n++;
+    }
+    closedir(d);
+    return n;
+}
 
 int photo_scan(orient_t o, int *bad) {
     char (*ids)[PHOTO_ID_MAX] = heap_caps_malloc(PHOTO_MAX * PHOTO_ID_MAX, MALLOC_CAP_SPIRAM);

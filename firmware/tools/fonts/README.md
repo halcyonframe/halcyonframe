@@ -15,7 +15,10 @@ font engine. All are licensed under the SIL Open Font License 1.1. The license t
 
 Labels and tags use Inter SemiBold in every style.
 
-To regenerate, download the `.ttf` files from those folders into one directory, then run:
+The tables in this repository were generated from google/fonts at commit `47d54ca1ebb1` (2026-10-16). To
+regenerate, download the `.ttf` files from those folders (at that commit for identical output) into one
+directory, then run the command below. It needs Pillow built with libraqm, which the EB Garamond lining
+figures require:
 
     tools/ttf2c.py <that-directory> > main/typefaces.c
 

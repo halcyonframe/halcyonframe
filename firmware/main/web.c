@@ -64,7 +64,16 @@ static void json_str(char *out, size_t n, const char *s) {
         unsigned char c = *s;
         if (c == '"' || c == '\\') { out[o++] = '\\'; out[o++] = c; }
         else if (c < 0x20) o += snprintf(out + o, n - o, "\\u%04x", c);
-        else out[o++] = c;
+        else if (c < 0x80) out[o++] = c;
+        else {
+            // Copy a well-formed UTF-8 sequence whole; anything else (e.g. a Latin-1 network name nearby)
+            // becomes U+FFFD, since one bad byte would make the whole response unparseable.
+            int len = c >= 0xF0 && c < 0xF5 ? 4 : c >= 0xE0 ? 3 : c >= 0xC2 && c < 0xE0 ? 2 : 0;
+            int k = 1;
+            while (len && k < len && ((unsigned char) s[k] & 0xC0) == 0x80) k++;
+            if (len && k == len && o + len < n - 1) { memcpy(out + o, s, len); o += len; s += len - 1; }
+            else o += snprintf(out + o, n - o, "\\ufffd");
+        }
     }
     out[o++] = '"';
     out[o] = 0;
@@ -95,6 +104,10 @@ static bool query_id(httpd_req_t *req, char *id) {
 static esp_err_t h_index(httpd_req_t *req) {
     app_touch();
     httpd_resp_set_type(req, "text/html");
+    // Everything the page needs comes from the frame itself; this keeps it that way (inline code is ours).
+    httpd_resp_set_hdr(req, "Content-Security-Policy",
+                       "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
+                       "script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'");
     // EMBED_TXTFILES appends a NUL terminator; don't send it
     return httpd_resp_send(req, index_html_start, index_html_end - index_html_start - 1);
 }
@@ -245,8 +258,7 @@ static esp_err_t h_delete(httpd_req_t *req) {
     char id[PHOTO_ID_MAX];
     if (!query_id(req, id)) return send_err(req, "400 Bad Request", "bad id");
     if (!photo_delete(id)) return send_err(req, "404 Not Found", "not found");
-    int bad;
-    photo_scan(g_cfg.orientation, &bad); // refresh the broken-photo count the UI shows
+    app_rescan_photos(); // refresh the broken-photo count the UI shows, in the background
     return send_ok(req);
 }
 
@@ -299,10 +311,10 @@ static esp_err_t h_settings_get(httpd_req_t *req) {
 
 // POST /api/settings, application/x-www-form-urlencoded. Only fields present are changed, so the UI
 // omits password fields the user didn't touch.
-static esp_err_t h_settings_post(httpd_req_t *req) {
+static esp_err_t settings_post(httpd_req_t *req) {
     REQUIRE_CSRF(req);
     app_touch();
-    char body[1024], v[200]; // values arrive URL-encoded: up to 3x their decoded length
+    char body[2048], v[200]; // values arrive URL-encoded: up to 3x their decoded length
     if (req->content_len >= sizeof(body)) return send_err(req, "400 Bad Request", "too large");
     int got = 0, timeouts = 0;
     while (got < req->content_len) {
@@ -345,7 +357,9 @@ static esp_err_t h_settings_post(httpd_req_t *req) {
     if (strspn(c.hostname, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") != strlen(c.hostname))
         return send_err(req, "400 Bad Request", "hostname: letters, digits and - only");
     if (c.status_every != 30 && c.status_every != 60) c.status_every = 0;
-    if (c.status_min < 1) c.status_min = 1;
+    c.status_min = c.status_min < 1 ? 1 : c.status_min > 30 ? 30 : c.status_min;
+    if (c.interval_min > 10080) c.interval_min = 10080;
+    if (c.awake_min > 1440) c.awake_min = 1440;
     if (!wifi_pass_valid(c.wifi_pass)) return send_err(req, "400 Bad Request", "Wi-Fi password must be 8-63 chars");
     if (!wifi_pass_valid(c.ap_pass)) return send_err(req, "400 Bad Request", "AP password must be 8-63 chars");
     bool turned = c.orientation != g_cfg.orientation;
@@ -360,6 +374,15 @@ static esp_err_t h_settings_post(httpd_req_t *req) {
     // Frame turned: switch to a photo cropped for the new orientation (or the matching status screen).
     if (turned) display_request(NULL);
     return send_ok(req);
+}
+
+// The whole read-modify-write runs under the settings lock, so a result from the auto-setup task can't be
+// lost or interleaved with this save (every early return above stays inside it).
+static esp_err_t h_settings_post(httpd_req_t *req) {
+    config_lock();
+    esp_err_t r = settings_post(req);
+    config_unlock();
+    return r;
 }
 
 // GET /api/wifi: nearby networks for the settings page. POST /api/wifi/scan refreshes the list first
@@ -416,17 +439,20 @@ typedef struct {
     int timeouts;
 } ota_upload_t;
 
+// Fills the chunk completely (except at the end), so the first one always holds the whole image header
+// that ota_install() checks.
 static int ota_recv(void *ctx, char *buf, size_t len) {
     ota_upload_t *u = ctx;
-    while (u->left > 0) {
-        int r = httpd_req_recv(u->req, buf, u->left < len ? u->left : len);
+    size_t got = 0;
+    while (got < len && u->left > 0) {
+        size_t want = len - got < u->left ? len - got : u->left;
+        int r = httpd_req_recv(u->req, buf + got, want);
         if (r == HTTPD_SOCK_ERR_TIMEOUT && ++u->timeouts < MAX_RECV_TIMEOUTS) continue;
         if (r <= 0) return -1;
-        u->left -= r;
+        u->left -= r, got += r;
         app_touch();
-        return r;
     }
-    return 0;
+    return (int) got;
 }
 
 static esp_err_t h_ota(httpd_req_t *req) {
@@ -470,6 +496,8 @@ static esp_err_t h_reboot(httpd_req_t *req) {
 // DNS rebinding defence. A malicious web page can point its own domain at the frame's IP, and the
 // browser then treats it as same-origin (so X-PF no longer helps). The Host header still carries that
 // foreign domain, so only accept requests addressed to an IP literal or this frame's own names.
+static char boot_host[33]; // hostname at start-up: still what mDNS advertises until the next restart
+
 static bool host_ok(httpd_req_t *req) {
     char host[80];
     if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return false;
@@ -477,7 +505,10 @@ static bool host_ok(httpd_req_t *req) {
     if (host[0] && strspn(host, "0123456789.") == strlen(host)) return true;
     char local[48];
     snprintf(local, sizeof(local), "%s.local", g_cfg.hostname);
-    return !strcasecmp(host, g_cfg.hostname) || !strcasecmp(host, local);
+    char boot_local[48];
+    snprintf(boot_local, sizeof(boot_local), "%s.local", boot_host);
+    return !strcasecmp(host, g_cfg.hostname) || !strcasecmp(host, local) || !strcasecmp(host, boot_host) ||
+           !strcasecmp(host, boot_local);
 }
 
 // Every route goes through here; user_ctx holds the real handler.
@@ -487,6 +518,7 @@ static esp_err_t guarded(httpd_req_t *req) {
 }
 
 void web_start(void) {
+    snprintf(boot_host, sizeof(boot_host), "%s", g_cfg.hostname);
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.max_uri_handlers = 20;
     cfg.stack_size = 8192;

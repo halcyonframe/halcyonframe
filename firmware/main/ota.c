@@ -35,12 +35,15 @@ int ota_last_result(const char **msg) {
 // The image starts with a 24-byte image header and an 8-byte segment header, then the app description,
 // whose version field is 16 bytes in. Reading it from the first chunk lets the screen name the new version
 // before anything is written.
-static void read_incoming_version(const char *buf, int n) {
+// Also the check that this is *our* app (project name in the description, 32 bytes after the version):
+// a bootloader or the full USB image also starts with 0xE9 and could otherwise pass the image checks.
+static bool read_incoming_version(const char *buf, int n) {
     uint32_t magic;
-    if (n < 80 || (uint8_t) buf[0] != 0xE9) return;
+    if (n < 112 || (uint8_t) buf[0] != 0xE9) return false;
     memcpy(&magic, buf + 32, 4);
-    if (magic != ESP_APP_DESC_MAGIC_WORD) return;
+    if (magic != ESP_APP_DESC_MAGIC_WORD || strncmp(buf + 80, "halcyonframe", 32)) return false;
     snprintf(incoming, sizeof(incoming), "%.31s", buf + 48);
+    return true;
 }
 
 bool ota_busy(void) { return atomic_load(&busy); }
@@ -54,7 +57,10 @@ esp_err_t ota_install(ota_read_fn read, void *ctx) {
         free(buf);
         return ESP_ERR_NOT_FOUND;
     }
-    atomic_store(&busy, true);
+    if (atomic_exchange(&busy, true)) { // one update at a time
+        free(buf);
+        return ESP_ERR_INVALID_STATE;
+    }
     esp_ota_handle_t h;
     // Sequential writes erase as they go, so the first write doesn't stall long enough to time out the upload.
     esp_err_t err = esp_ota_begin(slot, OTA_WITH_SEQUENTIAL_WRITES, &h);
@@ -65,8 +71,12 @@ esp_err_t ota_install(ota_read_fn read, void *ctx) {
         if (n == 0) break;
         if (first && n > 0) {
             first = false;
-            read_incoming_version(buf, n);
-            if (incoming[0] && start_hook) start_hook();
+            incoming[0] = 0;
+            if (!read_incoming_version(buf, n)) { // not a Halcyon Frame app image: refuse before writing
+                err = ESP_ERR_INVALID_VERSION;
+                break;
+            }
+            if (start_hook) start_hook();
         }
         // The first write also rejects anything that isn't an ESP32 app image.
         err = n < 0 ? ESP_FAIL : esp_ota_write(h, buf, n);
@@ -107,9 +117,10 @@ bool ota_from_card(void) {
     return err == ESP_OK;
 }
 
+// The record is only cleared once the new firmware confirms itself (ota_mark_good). If it crashes before
+// that, the bootloader goes back to the old firmware, which then finds the record and reports the rollback.
 void ota_init(void) {
     if (pending.magic != PENDING_MAGIC) return;
-    pending.magic = 0;
     const char *now = esp_app_get_description()->version;
     if (!strcmp(now, pending.to) || strcmp(pending.to, pending.from) == 0) {
         result = 1;
@@ -117,10 +128,12 @@ void ota_init(void) {
     } else {
         result = 2;
         snprintf(result_msg, sizeof(result_msg), "Update to %s didn't start; went back to %s", pending.to, now);
+        pending.magic = 0;
     }
 }
 
 void ota_mark_good(void) {
+    pending.magic = 0; // this firmware works: the update (if any) is settled
     esp_ota_img_states_t state;
     if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &state) == ESP_OK &&
         state == ESP_OTA_IMG_PENDING_VERIFY) {

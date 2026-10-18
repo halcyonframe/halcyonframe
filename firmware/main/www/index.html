@@ -42,6 +42,8 @@ input[type=range] { width: 100%; }
 #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
 .ph { border: 2px solid transparent; border-radius: 8px; overflow: hidden; background: var(--bg); }
 .ph.current { border-color: var(--accent); }
+.ph.current::before { content: 'On the frame now'; display: block; font-size: 12px; padding: 4px 8px; color: var(--accent); }
+#drop:focus-visible { outline: 2px solid var(--accent); }
 .ph img, .ph canvas { width: 100%; aspect-ratio: 5 / 3; object-fit: contain; display: block; background: #ddd; }
 .ph .row { padding: 6px; justify-content: space-between; }
 .ph button { padding: 4px 10px; font-size: 13px; }
@@ -69,7 +71,7 @@ form.settings h3 { grid-column: 1 / -1; margin: 10px 0 0; font-size: 14px; }
 <body>
 <header>
   <h1><svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><rect x="6" y="6" width="88" height="88" rx="14" fill="none" stroke="currentColor" stroke-width="8"/><path d="M28 58a22 22 0 0 1 44 0z" fill="#efde44" stroke="currentColor" stroke-width="3"/><path d="M18 62h64M28 72h44M38 82h24" stroke="#2157ba" stroke-width="6" stroke-linecap="round"/></svg>Halcyon Frame</h1>
-  <div id="status">Loading…</div>
+  <div id="status" role="status" aria-live="polite">Loading…</div>
   <div class="row">
     <button id="btnNext">Next photo</button>
     <button id="btnSleep">Sleep now</button>
@@ -80,7 +82,7 @@ form.settings h3 { grid-column: 1 / -1; margin: 10px 0 0; font-size: 14px; }
   <div id="banners"></div>
   <section>
     <h2>Add photos</h2>
-    <div id="drop">Drop images here or click to choose<input id="file" type="file" accept="image/*" multiple hidden></div>
+    <label id="drop" tabindex="0" role="button" for="file">Drop images here or click to choose<input id="file" type="file" accept="image/*" multiple hidden></label>
     <div class="batch" id="batchOffer" hidden>
       <div id="batchOfferText"></div>
       <div class="row"><button class="primary" id="btnBatch">Upload all automatically</button><span class="hint">or review them one at a time below</span></div>
@@ -175,7 +177,7 @@ form.settings h3 { grid-column: 1 / -1; margin: 10px 0 0; font-size: 14px; }
         <button type="button" id="btnShowStatus">Show it on the frame now</button>
       </div>
       <label class="check" style="display:flex;gap:6px;align-items:center;color:var(--fg);grid-column:1/-1"><input type="checkbox" name="auto_setup"> Set the time, time zone and location automatically (uses the internet: pool.ntp.org and ip-api.com)</label>
-      <label>ZIP code (for sunrise and sunset)<input type="text" name="zip" inputmode="numeric" maxlength="5" pattern="[0-9]{5}" placeholder="e.g. 60601"><span class="hint" id="zipHint"></span></label>
+      <label>ZIP code (for sunrise and sunset)<input type="text" name="zip" inputmode="numeric" maxlength="5" pattern="[0-9]{5}" placeholder="e.g. 60601"><span class="hint" id="zipHint"></span><span class="hint">ZIP locations © <a href="https://www.geonames.org/">GeoNames</a>, CC BY 4.0</span></label>
       <label>Temperature
         <select name="temp_unit"><option value="F">°F (and 12-hour clock)</option><option value="C">°C (and 24-hour clock)</option></select>
       </label>
@@ -198,7 +200,7 @@ form.settings h3 { grid-column: 1 / -1; margin: 10px 0 0; font-size: 14px; }
       <button class="primary" id="btnSave">Save</button>
       <button id="btnReboot">Restart frame</button>
     </div>
-    <p class="hint">Settings are stored in <code>config.txt</code> on the TF card. Photos live in <code>/photos</code>. Press KEY on the frame to wake it, and KEY again to show this page's address on the frame. BOOT shows the next photo.</p>
+    <p class="hint">Settings are stored in <code>config.txt</code> on the TF card. Photos live in <code>/photos</code>. Press KEY on the frame to wake it and see the status screen; hold KEY for 2 seconds to show this page's address on the frame. BOOT shows the next photo.</p>
   </section>
   <section>
     <h2>Firmware</h2>
@@ -212,7 +214,7 @@ form.settings h3 { grid-column: 1 / -1; margin: 10px 0 0; font-size: 14px; }
     <p class="hint">Use <code>halcyonframe.bin</code> from a <a href="https://github.com/halcyonframe/halcyonframe/releases">release</a>. If the new firmware doesn't start properly, the frame goes back to the current one by itself. Without the web page, copy the file to the card as <code>firmware.bin</code> and restart the frame.</p>
   </section>
 </main>
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <script id="core">
 // Image pipeline. No DOM access here so it can be unit-tested outside a browser.
@@ -391,7 +393,7 @@ async function refreshStatus() {
     $('#status').innerHTML = [
       s.busy ? '<span class="busy">Refreshing display…</span>' : '',
       `Battery ${bat}`,
-      s.sd ? `TF ${gb(s.sd_free)} / ${gb(s.sd_total)} GB free` : '<span style="color:var(--danger)">No TF card</span>',
+      s.sd ? `Card: ${gb(s.sd_free)} of ${gb(s.sd_total)} GB free` : '<span style="color:var(--danger)">No TF card</span>',
       s.ap_mode ? `Access point ${s.ip}` : s.ip,
     ].filter(Boolean).join('<span>·</span>');
     if (s.current !== current) { current = s.current; markCurrent(); }
@@ -407,7 +409,7 @@ async function refreshStatus() {
     if (s.battery_state === 'critical') b.push(['bad', 'The battery is empty. Plug in the USB-C cable.']);
     else if (s.battery_state === 'low') b.push(['warn', `Battery low (${s.percent}%). Charge the frame soon.`]);
     if (s.bad_photos) b.push(['warn', `${s.bad_photos} photo file${s.bad_photos > 1 ? 's' : ''} on the card can't be shown (wrong size). Delete and add them again.`]);
-    if (s.sd && s.photos === 0) b.push(['info', 'Welcome! Add your first photo below. It shows on the frame about 20 seconds after you upload it.']);
+    if (s.sd && s.photos === 0) b.push(['info', 'Welcome! Add your first photo below. Your first one shows on the frame about 20 seconds after you upload it.']);
     if (s.ap_mode && !s.wifi_ssid) b.push(['info', "Optional: connect the frame to your home Wi-Fi under Settings, so you don't have to switch networks to add photos."]);
     if (pinnedBanner) b.unshift(pinnedBanner);
     setBanners(b);
@@ -429,7 +431,9 @@ async function loadGallery() {
     const el = document.createElement('div');
     el.className = 'ph';
     el.dataset.id = id;
-    el.innerHTML = `<img loading="lazy" alt=""><div class="row"><button data-act="show">Show</button><button class="danger" data-act="del">Delete</button></div>`;
+    const ts = parseInt(id.slice(0, 8), 36); // ids start with an 8-character base-36 timestamp
+    const when = ts > 1.5e12 && ts < 4e12 ? new Date(ts).toLocaleString() : id;
+    el.innerHTML = `<img loading="lazy" alt="Photo added ${when}"><div class="row"><button data-act="show" aria-label="Show photo added ${when} on the frame">Show</button><button class="danger" data-act="del" aria-label="Delete photo added ${when}">Delete</button></div>`;
     if (photoOrient(id) !== packOrient()) {
       // Cropped for the other orientation: it would appear sideways, so the slideshow skips it.
       el.classList.add('other');
@@ -718,7 +722,9 @@ $('#btnBatch').onclick = async () => {
 $('#btnBatchStop').onclick = () => { batchStop = true; $('#batchStatus').textContent += ' · stopping after this photo…'; };
 
 const drop = $('#drop');
-drop.onclick = () => $('#file').click();
+// The drop zone is a <label> for the file input (so clicking it opens the picker natively); keyboard users
+// get Enter/Space too.
+drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#file').click(); } });
 $('#file').onchange = e => { addFiles(e.target.files); e.target.value = ''; };
 drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
 drop.addEventListener('dragleave', () => drop.classList.remove('over'));
@@ -844,7 +850,7 @@ function showNetworks(networks) {
   const opts = networks.map(n => {
     const o = document.createElement('option');
     o.value = n.ssid;
-    o.textContent = `${n.ssid}  ${bars(n.rssi)}${n.secure ? ' 🔒' : ''}`; // textContent: names are untrusted
+    o.textContent = `${n.ssid}  ${bars(n.rssi)}${n.secure ? ' 🔒 (secured)' : ' (open)'}`; // textContent: names are untrusted
     o.dataset.secure = n.secure;
     return o;
   });
@@ -876,7 +882,8 @@ $('#btnScan').onclick = () => {
 };
 
 // Wi-Fi changes only take effect after a restart, so saving them restarts the frame right away.
-const wifiTouched = () => touched.has('wifi_ssid') || touched.has('wifi_pass');
+// Wi-Fi and hostname changes only take effect after a restart (the hostname is announced over mDNS at start).
+const wifiTouched = () => touched.has('wifi_ssid') || touched.has('wifi_pass') || touched.has('hostname');
 function updateSaveLabel() { $('#btnSave').textContent = wifiTouched() ? 'Save & connect' : 'Save'; }
 form.addEventListener('input', updateSaveLabel);
 
@@ -892,7 +899,7 @@ $('#btnSave').onclick = async () => {
   body.set('cards', cardSelects().map(s => s.value).join(','));
   body.set('auto_setup', form.auto_setup.checked ? 1 : 0);
   const loc = zipLookup();
-  body.set('lat', loc ? loc[0].toFixed(3) : ''); body.set('lon', loc ? loc[1].toFixed(3) : '');
+  if (touched.has('zip')) { body.set('lat', loc ? loc[0].toFixed(3) : ''); body.set('lon', loc ? loc[1].toFixed(3) : ''); }
   // Passwords are write-only: send them only when edited, so saving other fields never clears them.
   for (const k of ['wifi_pass', 'ap_pass']) if (touched.has(k)) body.set(k, form[k].value);
   const connect = wifiTouched(), ssid = form.wifi_ssid.value.trim();

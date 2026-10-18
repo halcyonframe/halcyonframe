@@ -75,8 +75,9 @@ void clock_init(const char *posix_tz) {
     dc.device_address = SHT_ADDR;
     i2c_master_bus_add_device(board_i2c_bus(), &dc, &sht);
 
-    // Through deep sleep the ESP32's own clock keeps running; the RTC is only needed after power loss.
-    if (clock_valid()) return;
+    // The ESP32 keeps counting through deep sleep, but on its internal RC oscillator, which drifts by
+    // seconds per hour with temperature. The PCF85063 runs on a crystal, so take the time from it on every
+    // boot and wake (one I2C read) whenever it holds a valid time.
     uint8_t reg = RTC_REG_SECONDS, t[7];
     if (i2c_master_transmit_receive(rtc, &reg, 1, t, sizeof(t), 100) != ESP_OK) {
         ESP_LOGW(TAG, "RTC not answering");
@@ -91,7 +92,10 @@ void clock_init(const char *posix_tz) {
     ESP_LOGI(TAG, "time restored from RTC");
 }
 
-static void ntp_synced(struct timeval *tv) { rtc_write(tv->tv_sec); }
+static void ntp_synced(struct timeval *tv) {
+    rtc_write(tv->tv_sec);
+    app_schedule_changed(); // the clock may have jumped
+}
 
 void clock_start_ntp(const char *server) {
     if (!server[0]) return;
@@ -158,6 +162,7 @@ static void geo_task(void *arg) {
         char la[16], lo[16];
         snprintf(la, sizeof(la), "%.2f", lat->valuedouble); // ~1 km: city level is all the sun cards need
         snprintf(lo, sizeof(lo), "%.2f", lon->valuedouble);
+        config_lock();
         bool changed = strcmp(g_cfg.geo_zone, zone->valuestring) || strcmp(g_cfg.geo_lat, la) || strcmp(g_cfg.geo_lon, lo) ||
                        strcmp(g_cfg.tz, posix);
         if (changed) {
@@ -170,6 +175,7 @@ static void geo_task(void *arg) {
             config_save(); // only on change: the card shouldn't be rewritten every wake
             app_schedule_changed();
         }
+        config_unlock();
         ESP_LOGI(TAG, "auto setup: zone %s", zone->valuestring);
     } else {
         ESP_LOGW(TAG, "auto setup lookup failed or returned an unknown zone");
