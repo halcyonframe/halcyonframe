@@ -8,7 +8,8 @@ void wifi_start(void);
 void wifi_stop(void);
 bool wifi_is_ap(void);
 const char *wifi_ip(void);
-wifi_err_t wifi_last_error(void); // why joining the home network failed (WIFI_ERR_NONE when connected)
+wifi_err_t wifi_last_error(void);
+int wifi_rssi(void); // dBm of the home network (live, or last known while Wi-Fi is off); 0 = never connected // why joining the home network failed (WIFI_ERR_NONE when connected)
 
 typedef struct {
     char ssid[33];

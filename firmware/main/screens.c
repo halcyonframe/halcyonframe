@@ -1,4 +1,5 @@
 #include "screens.h"
+#include "status.h"
 #include "epd.h"
 #include <stdio.h>
 #include <string.h>
@@ -9,7 +10,7 @@
 
 // ST_BIG: headline-size blue, for names and addresses to type or join. ST_EXTRA: reassurance that is
 // dropped first when very long names leave no room.
-enum { ST_BODY, ST_RED, ST_BIG, ST_EXTRA };
+enum { ST_BODY, ST_RED, ST_BIG, ST_EXTRA, ST_GREEN };
 enum { VIS_NONE, VIS_QR, VIS_BATTERY };
 
 typedef struct {
@@ -74,7 +75,7 @@ static int draw_line(canvas_t *c, bool draw, int x, int y, int w, line_t l) {
         if (draw) gfx_text(c, x, y, &font_32x64, l.text, EPD_BLUE);
         return LINE_BIG;
     }
-    uint8_t color = l.style == ST_RED ? EPD_RED : l.style == ST_BIG ? EPD_BLUE : EPD_BLACK;
+    uint8_t color = l.style == ST_RED ? EPD_RED : l.style == ST_GREEN ? EPD_GREEN : l.style == ST_BIG ? EPD_BLUE : EPD_BLACK;
     return text_block(c, draw, x, y, w, &font_16x32, LINE_BODY, color, l.text);
 }
 
@@ -162,10 +163,14 @@ static void interval_text(char *out, size_t n, int min) {
 bool screen_render(screen_t s, const screen_info_t *in, uint8_t *buf) {
     canvas_t c;
     gfx_begin(&c, buf, in->orient);
+    if (s == SCR_STATUS) {
+        status_render(&c, in);
+        return true;
+    }
     doc_t d = {0};
     // The open/WPA2 rule matches wifi.c: shorter than 8 characters means an open hotspot.
     bool open = strlen(in->ap_pass) < 8;
-    char ssid_esc[80], pass_esc[140], wifi_qr[260], url[48], pass_line[96], t1[128], t2[128], t3[96], t4[96], t5[96];
+    char ssid_esc[80], pass_esc[140], wifi_qr[260], url[48], pass_line[96], t1[128], t2[128], t3[96], t4[96], t5[96], fw[64];
     qr_escape(ssid_esc, sizeof(ssid_esc), in->ap_ssid);
     qr_escape(pass_esc, sizeof(pass_esc), in->ap_pass);
     if (open) snprintf(wifi_qr, sizeof(wifi_qr), "WIFI:T:nopass;S:%s;;", ssid_esc);
@@ -237,7 +242,15 @@ bool screen_render(screen_t s, const screen_info_t *in, uint8_t *buf) {
             d.steps[0] = (step_t) {0, VIS_QR, url, 4, {{t1, ST_BODY}, {t2, ST_BODY}, {t5, ST_BODY}, {t3, ST_BODY}, {card, ST_BODY}, {t4, ST_EXTRA}}};
         }
         d.title = "How to reach me";
-        d.footer = "Press BOOT for the next photo.";
+        // Start-up screen: say which firmware is running and how an update went, and that photos follow.
+        snprintf(fw, sizeof(fw), "Firmware %s", in->fw_version ? in->fw_version : "?");
+        if (in->boot && in->update_result) {
+            d.intro[0] = (line_t) {in->update_msg, in->update_result == 1 ? ST_GREEN : ST_RED};
+            d.intro[1] = (line_t) {in->update_result == 1 ? NULL : fw, ST_BODY};
+        } else {
+            d.intro[0] = (line_t) {fw, ST_BODY};
+        }
+        d.footer = in->boot ? "Shows 60 s at start-up, then your photos." : "Press BOOT for the next photo.";
         break;
     }
     case SCR_CARD:
@@ -248,6 +261,17 @@ bool screen_render(screen_t s, const screen_info_t *in, uint8_t *buf) {
                                    : "I can't find my memory card. Push it all the way into its slot, then press KEY.",
                                ST_BODY};
         d.footer = footer_wake;
+        break;
+    case SCR_UPDATE:
+        snprintf(t1, sizeof(t1), "Installed: %s", in->fw_version ? in->fw_version : "?");
+        snprintf(t2, sizeof(t2), "Installing: %s", in->fw_incoming && in->fw_incoming[0] ? in->fw_incoming : "new firmware");
+        d = (doc_t) {
+            .title = "Updating firmware",
+            .intro = {{t1, ST_BODY}, {t2, ST_BIG}},
+            .steps = {{0, VIS_NONE, NULL, 0, {{"The frame restarts by itself when it's done, in about a minute.", ST_BODY},
+                                             {"Please don't unplug it.", ST_RED}}}},
+            .footer = "Your photos and settings stay as they are.",
+        };
         break;
     case SCR_BATTERY:
         d = (doc_t) {

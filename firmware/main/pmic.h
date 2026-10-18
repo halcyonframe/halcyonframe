@@ -16,7 +16,8 @@ typedef struct {
 
 typedef enum { BATT_OK, BATT_LOW, BATT_CRITICAL } batt_level_t;
 
-void pmic_init(void);
+void pmic_init(void); // also creates the board's shared I2C bus
+i2c_master_bus_handle_t board_i2c_bus(void);
 // LOW (<= 15%) adds a "Charge me" badge to photos; CRITICAL (<= 2%) shows the "Please charge me" screen
 // so that is what stays on the panel once the battery dies. Always OK on USB power or while charging.
 batt_level_t pmic_battery_level(void);

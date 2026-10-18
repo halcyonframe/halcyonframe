@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert Spleen BDF fonts to the C tables in main/font.c (printable ASCII only).
+"""Convert Spleen BDF fonts to the C tables in main/font.c (printable ASCII plus the degree sign).
 
 Usage: tools/bdf2c.py spleen-16x32.bdf spleen-32x64.bdf > main/font.c
 Spleen: https://github.com/fcambus/spleen (BSD-2-Clause, see notice in the generated file).
@@ -7,6 +7,7 @@ Spleen: https://github.com/fcambus/spleen (BSD-2-Clause, see notice in the gener
 import sys
 
 FIRST, LAST = 32, 126
+EXTRA = [176]  # degree sign, stored right after '~' (glyph index 95); gfx.c maps U+00B0 to it
 
 
 def parse(path):
@@ -27,11 +28,11 @@ def parse(path):
             in_bitmap, bits = True, []
         elif tok[0] == "ENDCHAR":
             in_bitmap = False
-            if FIRST <= enc <= LAST:
+            if FIRST <= enc <= LAST or enc in EXTRA:
                 glyphs[enc] = bits
         elif in_bitmap:
             bits.append(tok[0])
-    missing = [c for c in range(FIRST, LAST + 1) if c not in glyphs]
+    missing = [c for c in list(range(FIRST, LAST + 1)) + EXTRA if c not in glyphs]
     assert not missing, f"{path}: missing glyphs {missing}"
     return w, h, glyphs
 
@@ -52,10 +53,10 @@ def main():
         w, h, glyphs = parse(path)
         name = f"font_{w}x{h}"
         print(f"static const uint8_t {name}_bits[] = {{")
-        for c in range(FIRST, LAST + 1):
+        for c in list(range(FIRST, LAST + 1)) + EXTRA:
             data = bytes.fromhex("".join(glyphs[c]))
             assert len(data) == w // 8 * h
-            print("    " + ",".join(f"0x{b:02x}" for b in data) + f", // {chr(c)!r}")
+            print("    " + ",".join(f"0x{b:02x}" for b in data) + f", // U+{c:04X}")
         print("};")
         print(f"const font_t {name} = {{{w}, {h}, {name}_bits}};\n")
 

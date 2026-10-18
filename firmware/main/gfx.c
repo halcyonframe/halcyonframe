@@ -57,14 +57,16 @@ void gfx_line(canvas_t *c, int x0, int y0, int x1, int y1, int thick, uint8_t co
     }
 }
 
-// Next character to draw from UTF-8: printable ASCII as-is, any other code point as '?'.
-static char next_char(const char **s) {
+// Next glyph to draw from UTF-8: printable ASCII as-is, the degree sign (U+00B0) as FONT_DEGREE, any other
+// code point as '?'.
+static int next_char(const char **s) {
     unsigned char ch = (unsigned char) *(*s)++;
     if (ch >= 0x80) {
+        bool degree = ch == 0xC2 && (unsigned char) **s == 0xB0;
         while ((**s & 0xC0) == 0x80) (*s)++; // skip continuation bytes
-        return '?';
+        return degree ? FONT_DEGREE : '?';
     }
-    return ch < 32 || ch > 126 ? '?' : (char) ch;
+    return ch < 32 || ch > 126 ? '?' : ch;
 }
 
 int gfx_text_width(const font_t *f, const char *s) {
@@ -73,16 +75,22 @@ int gfx_text_width(const font_t *f, const char *s) {
     return n * f->w;
 }
 
-int gfx_text(canvas_t *c, int x, int y, const font_t *f, const char *s, uint8_t color) {
+int gfx_text_scaled(canvas_t *c, int x, int y, const font_t *f, const char *s, uint8_t color, int scale) {
     int x0 = x, row_bytes = f->w / 8;
     while (*s) {
         const uint8_t *g = f->bits + (next_char(&s) - 32) * row_bytes * f->h;
         for (int j = 0; j < f->h; j++)
             for (int i = 0; i < f->w; i++)
-                if (g[j * row_bytes + i / 8] & (0x80 >> (i % 8))) put(c, x + i, y + j, color);
-        x += f->w;
+                if (g[j * row_bytes + i / 8] & (0x80 >> (i % 8)))
+                    for (int dy = 0; dy < scale; dy++)
+                        for (int dx = 0; dx < scale; dx++) put(c, x + i * scale + dx, y + j * scale + dy, color);
+        x += f->w * scale;
     }
     return x - x0;
+}
+
+int gfx_text(canvas_t *c, int x, int y, const font_t *f, const char *s, uint8_t color) {
+    return gfx_text_scaled(c, x, y, f, s, color, 1);
 }
 
 typedef struct {
@@ -111,4 +119,81 @@ int gfx_qr(canvas_t *c, int x, int y, int module_px, const char *text) {
         .user_data = &job,
     };
     return esp_qrcode_generate(&cfg, text) == 0 ? job.size_px : 0;
+}
+
+/* ---- proportional typefaces ---- */
+
+// Next code point from UTF-8 (malformed bytes come back as themselves; unknown glyphs are skipped).
+static uint32_t next_cp(const char **s) {
+    const unsigned char *p = (const unsigned char *) *s;
+    uint32_t cp = *p++;
+    int extra = cp >= 0xF0 ? 3 : cp >= 0xE0 ? 2 : cp >= 0xC0 ? 1 : 0;
+    if (extra) cp &= 0x3F >> extra;
+    while (extra-- && (*p & 0xC0) == 0x80) cp = cp << 6 | (*p++ & 0x3F);
+    *s = (const char *) p;
+    return cp;
+}
+
+static const pglyph_t *find(const pfont_t *f, uint32_t cp) {
+    int lo = 0, hi = f->count - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (f->glyphs[mid].cp == cp) return &f->glyphs[mid];
+        if (f->glyphs[mid].cp < cp) lo = mid + 1;
+        else hi = mid - 1;
+    }
+    return NULL;
+}
+
+int gfx_ptext(canvas_t *c, int x, int baseline, const pfont_t *f, const char *s, uint8_t color, int tracking) {
+    int x0 = x;
+    bool first = true;
+    while (*s) {
+        const pglyph_t *g = find(f, next_cp(&s));
+        if (!g) continue;
+        if (!first) x += tracking;
+        first = false;
+        if (c) {
+            int row = (g->w + 7) / 8;
+            const uint8_t *bits = GLYPH_BITS + g->off;
+            for (int j = 0; j < g->h; j++)
+                for (int i = 0; i < g->w; i++)
+                    if (bits[j * row + i / 8] & (0x80 >> (i % 8))) put(c, x + g->x + i, baseline + g->y + j, color);
+        }
+        x += g->adv;
+    }
+    return x - x0;
+}
+
+int gfx_pwidth(const pfont_t *f, const char *s, int tracking) { return gfx_ptext(NULL, 0, 0, f, s, 0, tracking); }
+
+int gfx_pcap(const pfont_t *f) {
+    const pglyph_t *g = find(f, '0');
+    return g ? -g->y : f->ascent;
+}
+
+void gfx_poly(canvas_t *c, const int (*pts)[2], int n, uint8_t color) {
+    int ymin = pts[0][1], ymax = pts[0][1];
+    for (int i = 1; i < n; i++) ymin = pts[i][1] < ymin ? pts[i][1] : ymin, ymax = pts[i][1] > ymax ? pts[i][1] : ymax;
+    for (int y = ymin; y <= ymax; y++) {
+        int xs[16], k = 0;
+        for (int i = 0; i < n && k < 16; i++) {
+            const int *a = pts[i], *b = pts[(i + 1) % n];
+            if ((a[1] <= y && b[1] > y) || (b[1] <= y && a[1] > y))
+                xs[k++] = a[0] + (y - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
+        }
+        for (int i = 1; i < k; i++) // sort the few crossings
+            for (int j = i; j > 0 && xs[j] < xs[j - 1]; j--) {
+                int t = xs[j];
+                xs[j] = xs[j - 1], xs[j - 1] = t;
+            }
+        for (int i = 0; i + 1 < k; i += 2)
+            for (int x = xs[i]; x <= xs[i + 1]; x++) put(c, x, y, color);
+    }
+}
+
+void gfx_half_disc(canvas_t *c, int cx, int cy, int r, uint8_t color) {
+    for (int j = -r; j <= 0; j++)
+        for (int i = -r; i <= r; i++)
+            if (i * i + j * j <= r * r) put(c, cx + i, cy + j, color);
 }

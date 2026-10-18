@@ -10,6 +10,9 @@
 static const char *TAG = "pmic";
 static XPowersPMU pmu;
 static bool pmu_ok;
+static i2c_master_bus_handle_t bus; // shared with the RTC and temperature sensor (clock.c)
+
+extern "C" i2c_master_bus_handle_t board_i2c_bus(void) { return bus; }
 
 extern "C" void pmic_init(void) {
     i2c_master_bus_config_t bus_cfg = {};
@@ -19,7 +22,6 @@ extern "C" void pmic_init(void) {
     bus_cfg.scl_io_num = (gpio_num_t) PIN_I2C_SCL;
     bus_cfg.glitch_ignore_cnt = 7;
     bus_cfg.flags.enable_internal_pullup = true;
-    i2c_master_bus_handle_t bus;
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_cfg, &bus));
 
     // Which of the board's I2C chips answer (addresses from the Waveshare schematic). Diagnostic only:

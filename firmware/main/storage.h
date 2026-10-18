@@ -21,6 +21,20 @@ typedef struct {
     bool shuffle;
     bool rotate180;   // the panel is mounted upside down in the stock frame, so this defaults on
     orient_t orientation; // how the frame hangs; config.txt: landscape | cw (turned right) | ccw (turned left)
+    char tz[64];          // POSIX TZ string, e.g. CST6CDT,M3.2.0,M11.1.0 (US Central)
+    char change_times[64]; // "07:00,19:30": change photos at these local times instead of every interval_min
+    char quiet_start[6], quiet_end[6]; // "23:00"/"07:00": no photo changes or status screens in between
+    int status_every;     // status screen (time, weather, battery, signal): 0 off, 60 at :00, 30 at :00 and :30
+    int status_min;       // minutes it stays up before the photo returns
+    bool key_status;      // short KEY press also shows the status screen (not just waking the frame)
+    char temp_unit[2];    // "F" or "C"
+    char ntp_server[64];  // optional; "" = time only comes from the browser when the web UI is opened
+    int typeface;         // status screen typeface (TYPEFACES index)
+    char cards[64];       // status cards left to right, e.g. "indoor,battery,photos,sun" (status.h CARD_NAMES)
+    char zip[11];         // shown in the UI; the browser turns it into lat/lon (sun cards)
+    char lat[16], lon[16];
+    bool auto_setup;      // time (pool.ntp.org), time zone and location from the internet when on Wi-Fi
+    char geo_zone[48], geo_lat[16], geo_lon[16]; // last automatic lookup (zone name for the UI, city-level coords)
 } config_t;
 
 extern config_t g_cfg;

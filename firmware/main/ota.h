@@ -11,9 +11,17 @@
 // Pulls the image in chunks: returns bytes read (>0), 0 at the end, <0 on error.
 typedef int (*ota_read_fn)(void *ctx, char *buf, size_t len);
 
+void ota_init(void); // at boot, before ota_mark_good(): works out how the last update went (ota_last_result)
 esp_err_t ota_install(ota_read_fn read, void *ctx); // writes, verifies and selects the new image; caller restarts
 bool ota_from_card(void);  // installs OTA_CARD_FILE if present; true = restart now
 void ota_mark_good(void);  // this firmware works: cancel the pending rollback
 bool ota_busy(void);
 const char *ota_version(void);
 const char *ota_slot(void); // running app partition, e.g. "ota_0"
+const char *ota_incoming_version(void); // version being installed right now ("" when none)
+// Called once an upload has been recognised as firmware, before anything is written: time to show the
+// "Updating firmware" screen.
+void ota_set_start_hook(void (*hook)(void));
+// After a restart: what happened to the last update. 0 = there was none, 1 = now running it, 2 = it didn't
+// start and the bootloader went back to the previous firmware. msg describes it ("" for 0).
+int ota_last_result(const char **msg);

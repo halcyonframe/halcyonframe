@@ -12,6 +12,8 @@
 #include "driver/sdmmc_host.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_mac.h"
+#include "esp_random.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 
@@ -83,16 +85,40 @@ void storage_space(uint64_t *total, uint64_t *free_bytes) {
 
 /* ---- config.txt: plain key=value lines so it can also be edited by hand on a PC ---- */
 
+#define OLD_SHARED_AP_PASS "photoframe" // every frame used this before per-frame passwords
+
+// Per-frame hotspot password. It's shown on the setup screen with a join QR code, so being random costs
+// the user nothing. No look-alike characters (0/o, 1/l/i), in case it's typed.
+static void random_ap_pass(char *out) {
+    static const char set[] = "abcdefghjkmnpqrstuvwxyz23456789";
+    for (int i = 0; i < 10; i++) out[i] = set[esp_random() % (sizeof(set) - 1)];
+    out[10] = 0;
+}
+
+// Last two bytes of the hotspot MAC, so several frames in one home get distinct names ("PhotoFrame-C121").
+static void unique_name(char *out, size_t n, const char *base, bool upper) {
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+    snprintf(out, n, upper ? "%s-%02X%02X" : "%s-%02x%02x", base, mac[4], mac[5]);
+}
+
 static void config_defaults(void) {
     memset(&g_cfg, 0, sizeof(g_cfg));
-    strcpy(g_cfg.ap_ssid, "PhotoFrame");
-    strcpy(g_cfg.ap_pass, "photoframe");
-    strcpy(g_cfg.hostname, "photoframe");
+    unique_name(g_cfg.ap_ssid, sizeof(g_cfg.ap_ssid), "PhotoFrame", true);
+    random_ap_pass(g_cfg.ap_pass);
+    unique_name(g_cfg.hostname, sizeof(g_cfg.hostname), "photoframe", false);
     g_cfg.interval_min = 60;
     g_cfg.awake_min = 10;
     g_cfg.shuffle = false;
     g_cfg.rotate180 = true;
     g_cfg.orientation = ORIENT_LANDSCAPE;
+    strcpy(g_cfg.tz, "CST6CDT,M3.2.0,M11.1.0");
+    g_cfg.status_every = 60;
+    g_cfg.status_min = 5;
+    g_cfg.key_status = true;
+    strcpy(g_cfg.temp_unit, "F");
+    strcpy(g_cfg.cards, "indoor,battery,photos,sun");
+    g_cfg.auto_setup = true;
 }
 
 const char *const ORIENT_NAMES[3] = {"landscape", "cw", "ccw"};
@@ -120,13 +146,29 @@ void config_load(void) {
         const char *key = line, *val = eq + 1;
         SET_STR(wifi_ssid) SET_STR(wifi_pass) SET_STR(ap_ssid) SET_STR(ap_pass) SET_STR(hostname)
         SET_INT(interval_min) SET_INT(awake_min) SET_INT(shuffle) SET_INT(rotate180)
+        SET_STR(tz) SET_STR(change_times) SET_STR(quiet_start) SET_STR(quiet_end) SET_STR(temp_unit) SET_STR(ntp_server)
+        SET_INT(status_every) SET_INT(status_min) SET_INT(key_status) SET_INT(typeface)
+        SET_STR(cards) SET_STR(zip) SET_STR(lat) SET_STR(lon) SET_INT(auto_setup)
+        SET_STR(geo_zone) SET_STR(geo_lat) SET_STR(geo_lon)
         if (!strcmp(key, "orientation"))
             for (int i = 0; i < 3; i++)
                 if (!strcmp(val, ORIENT_NAMES[i])) g_cfg.orientation = (orient_t) i;
     }
     fclose(f);
+    // One-time upgrade from the old shared hotspot defaults. The hostname is left alone on purpose: changing
+    // it would break the photoframe.local address people already use.
+    bool upgraded = false;
+    if (!strcmp(g_cfg.ap_pass, OLD_SHARED_AP_PASS)) random_ap_pass(g_cfg.ap_pass), upgraded = true;
+    if (!strcmp(g_cfg.ap_ssid, "PhotoFrame"))
+        unique_name(g_cfg.ap_ssid, sizeof(g_cfg.ap_ssid), "PhotoFrame", true), upgraded = true;
+    if (upgraded) {
+        ESP_LOGW(TAG, "hotspot is now \"%s\" with a per-frame password", g_cfg.ap_ssid);
+        config_save();
+    }
     if (g_cfg.interval_min < 0) g_cfg.interval_min = 0;
     if (g_cfg.awake_min < 0) g_cfg.awake_min = 0;
+    if (g_cfg.status_every != 30 && g_cfg.status_every != 60) g_cfg.status_every = 0;
+    if (g_cfg.status_min < 1) g_cfg.status_min = 1;
 }
 
 bool config_save(void) {
@@ -141,9 +183,23 @@ bool config_save(void) {
             "# PhotoFrame settings. Edit here or in the web UI.\n"
             "wifi_ssid=%s\nwifi_pass=%s\nap_ssid=%s\nap_pass=%s\nhostname=%s\n"
             "interval_min=%d\nawake_min=%d\nshuffle=%d\nrotate180=%d\n"
-            "# landscape, cw (frame turned right) or ccw (frame turned left)\norientation=%s\n",
+            "# landscape, cw (frame turned right) or ccw (frame turned left)\norientation=%s\n"
+            "# POSIX time zone, e.g. EST5EDT,M3.2.0,M11.1.0 / CST6CDT,M3.2.0,M11.1.0 / MST7 / PST8PDT,M3.2.0,M11.1.0\n"
+            "tz=%s\n"
+            "# change photos at these local times instead of every interval_min (empty = use the interval)\n"
+            "change_times=%s\nquiet_start=%s\nquiet_end=%s\n"
+            "# status screen: 0 off, 60 at the top of the hour, 30 at :00 and :30\n"
+            "status_every=%d\nstatus_min=%d\nkey_status=%d\ntemp_unit=%s\nntp_server=%s\n"
+            "# status screen: typeface 0-6 (Clean, Warm, Dramatic, Classic, Friendly, Modern, Technical) and four cards\n"
+            "# from indoor, battery, photos, wifi, sun, moon, daylight, next\n"
+            "typeface=%d\ncards=%s\nzip=%s\nlat=%s\nlon=%s\n"
+            "# 1 = set time (pool.ntp.org), time zone and location automatically when on Wi-Fi; 0 = fully local\n"
+            "auto_setup=%d\ngeo_zone=%s\ngeo_lat=%s\ngeo_lon=%s\n",
             g_cfg.wifi_ssid, g_cfg.wifi_pass, g_cfg.ap_ssid, g_cfg.ap_pass, g_cfg.hostname,
-            g_cfg.interval_min, g_cfg.awake_min, g_cfg.shuffle, g_cfg.rotate180, ORIENT_NAMES[g_cfg.orientation]);
+            g_cfg.interval_min, g_cfg.awake_min, g_cfg.shuffle, g_cfg.rotate180, ORIENT_NAMES[g_cfg.orientation],
+            g_cfg.tz, g_cfg.change_times, g_cfg.quiet_start, g_cfg.quiet_end, g_cfg.status_every, g_cfg.status_min,
+            g_cfg.key_status, g_cfg.temp_unit, g_cfg.ntp_server, g_cfg.typeface, g_cfg.cards, g_cfg.zip, g_cfg.lat,
+            g_cfg.lon, g_cfg.auto_setup, g_cfg.geo_zone, g_cfg.geo_lat, g_cfg.geo_lon);
     bool ok = fclose(f) == 0;
     // FAT rename won't overwrite an existing file
     if (ok) {

@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include "esp_app_desc.h"
+#include "esp_attr.h"
+#include <string.h>
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 
@@ -11,6 +13,35 @@ static const char *TAG = "ota";
 #define CHUNK 4096
 
 static atomic_bool busy;
+static char incoming[32];
+static void (*start_hook)(void);
+// What was being installed, kept through the restart (RTC_NOINIT survives resets but not power loss; the
+// magic value rejects power-on garbage) so the start screen can say whether the update took.
+#define PENDING_MAGIC 0x55504454
+static RTC_NOINIT_ATTR struct {
+    uint32_t magic;
+    char from[32], to[32];
+} pending;
+static int result;      // ota_last_result()
+static char result_msg[128];
+
+void ota_set_start_hook(void (*hook)(void)) { start_hook = hook; }
+const char *ota_incoming_version(void) { return incoming; }
+int ota_last_result(const char **msg) {
+    *msg = result_msg;
+    return result;
+}
+
+// The image starts with a 24-byte image header and an 8-byte segment header, then the app description,
+// whose version field is 16 bytes in. Reading it from the first chunk lets the screen name the new version
+// before anything is written.
+static void read_incoming_version(const char *buf, int n) {
+    uint32_t magic;
+    if (n < 80 || (uint8_t) buf[0] != 0xE9) return;
+    memcpy(&magic, buf + 32, 4);
+    if (magic != ESP_APP_DESC_MAGIC_WORD) return;
+    snprintf(incoming, sizeof(incoming), "%.31s", buf + 48);
+}
 
 bool ota_busy(void) { return atomic_load(&busy); }
 const char *ota_version(void) { return esp_app_get_description()->version; }
@@ -28,16 +59,29 @@ esp_err_t ota_install(ota_read_fn read, void *ctx) {
     // Sequential writes erase as they go, so the first write doesn't stall long enough to time out the upload.
     esp_err_t err = esp_ota_begin(slot, OTA_WITH_SEQUENTIAL_WRITES, &h);
     size_t total = 0;
+    bool first = true;
     while (err == ESP_OK) {
         int n = read(ctx, buf, CHUNK);
         if (n == 0) break;
+        if (first && n > 0) {
+            first = false;
+            read_incoming_version(buf, n);
+            if (incoming[0] && start_hook) start_hook();
+        }
         // The first write also rejects anything that isn't an ESP32 app image.
         err = n < 0 ? ESP_FAIL : esp_ota_write(h, buf, n);
         total += n > 0 ? n : 0;
     }
     if (err == ESP_OK) err = esp_ota_end(h); // verifies the image (chip, checksum, SHA-256)
     else esp_ota_abort(h);
-    if (err == ESP_OK) err = esp_ota_set_boot_partition(slot);
+    if (err == ESP_OK) {
+        pending.magic = PENDING_MAGIC;
+        snprintf(pending.from, sizeof(pending.from), "%s", ota_version());
+        snprintf(pending.to, sizeof(pending.to), "%s", incoming[0] ? incoming : "new firmware");
+        err = esp_ota_set_boot_partition(slot);
+        if (err != ESP_OK) pending.magic = 0;
+    }
+    if (err != ESP_OK) incoming[0] = 0;
     free(buf);
     atomic_store(&busy, false);
     if (err == ESP_OK) ESP_LOGI(TAG, "installed %u bytes into %s", (unsigned) total, slot->label);
@@ -61,6 +105,19 @@ bool ota_from_card(void) {
     unlink(done);
     rename(OTA_CARD_FILE, done);
     return err == ESP_OK;
+}
+
+void ota_init(void) {
+    if (pending.magic != PENDING_MAGIC) return;
+    pending.magic = 0;
+    const char *now = esp_app_get_description()->version;
+    if (!strcmp(now, pending.to) || strcmp(pending.to, pending.from) == 0) {
+        result = 1;
+        snprintf(result_msg, sizeof(result_msg), "Updated to %s", now);
+    } else {
+        result = 2;
+        snprintf(result_msg, sizeof(result_msg), "Update to %s didn't start; went back to %s", pending.to, now);
+    }
 }
 
 void ota_mark_good(void) {

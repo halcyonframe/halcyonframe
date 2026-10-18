@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "esp_event.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -174,3 +175,12 @@ void wifi_stop(void) {
 bool wifi_is_ap(void) { return ap_mode; }
 const char *wifi_ip(void) { return ip; }
 wifi_err_t wifi_last_error(void) { return last_err; }
+
+// Signal of the home network: live while connected, else the last value seen (kept across deep sleep,
+// so the status screen drawn on a quiet timer wake, with Wi-Fi off, can still show it).
+static RTC_DATA_ATTR int8_t last_rssi;
+int wifi_rssi(void) {
+    wifi_ap_record_t ap;
+    if (!ap_mode && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) last_rssi = ap.rssi;
+    return last_rssi;
+}

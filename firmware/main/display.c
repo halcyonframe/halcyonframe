@@ -1,4 +1,9 @@
 #include "display.h"
+#include "clock.h"
+#include "app.h"
+#include "ota.h"
+#include "status.h"
+#include <stdlib.h>
 #include "board.h"
 #include "epd.h"
 #include "pmic.h"
@@ -121,6 +126,32 @@ static void gather(screen_info_t *in) {
     uint64_t total, free_bytes;
     storage_space(&total, &free_bytes);
     in->free_gb = free_bytes / 1e9f;
+    in->now = time(NULL);
+    in->clock_ok = clock_valid();
+    in->has_climate = clock_climate(&in->temp_c, &in->rh);
+    in->fahrenheit = g_cfg.temp_unit[0] != 'C';
+    in->rssi = wifi_rssi();
+    in->card_total = total, in->card_used = total - free_bytes;
+    in->typeface = g_cfg.typeface;
+    in->next_photo = app_next_photo();
+    in->fw_version = ota_version();
+    in->fw_incoming = ota_incoming_version();
+    in->update_result = ota_last_result(&in->update_msg);
+    in->boot = app_boot_screen();
+    // A ZIP code entered in the UI wins; otherwise the automatic (IP-based) location.
+    bool zip = g_cfg.lat[0] && g_cfg.lon[0], geo = g_cfg.auto_setup && g_cfg.geo_lat[0] && g_cfg.geo_lon[0];
+    in->has_location = zip || geo;
+    in->lat = atof(zip ? g_cfg.lat : g_cfg.geo_lat), in->lon = atof(zip ? g_cfg.lon : g_cfg.geo_lon);
+    // cards=indoor,battery,photos,sun ; unknown or missing entries fall back to the default set
+    static const uint8_t def[4] = {CARD_INDOOR, CARD_BATTERY, CARD_PHOTOS, CARD_SUN};
+    memcpy(in->cards, def, 4);
+    const char *cp = g_cfg.cards;
+    for (int i = 0; i < 4 && *cp; i++) {
+        size_t n = strcspn(cp, ",");
+        for (int k = 0; k < CARD_COUNT; k++)
+            if (strlen(CARD_NAMES[k]) == n && !strncmp(cp, CARD_NAMES[k], n)) in->cards[i] = k;
+        cp += n + (cp[n] == ',');
+    }
 }
 
 void display_screen(screen_t s) {

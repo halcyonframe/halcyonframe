@@ -3,16 +3,21 @@
 #include "web.h"
 #include "app.h"
 #include "board.h"
+#include "clock.h"
 #include "display.h"
 #include "ota.h"
+#include "typefaces.h"
 #include "pmic.h"
 #include "storage.h"
 #include "wifi.h"
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <time.h>
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -103,18 +108,23 @@ static esp_err_t h_status(httpd_req_t *req) {
     storage_space(&total, &free_bytes);
     static const char *const WIFI_ERRS[] = {"", "auth", "not_found", "other"};
     static const char *const BATT[] = {"ok", "low", "critical"};
+    char temp[12] = "null", rh[12] = "null";
+    float tc, h;
+    if (clock_climate(&tc, &h)) snprintf(temp, sizeof(temp), "%.1f", tc), snprintf(rh, sizeof(rh), "%.0f", h);
     char buf[768];
     snprintf(buf, sizeof(buf),
              "{\"sd\":%s,\"sd_total\":%llu,\"sd_free\":%llu,\"photos\":%d,\"bad_photos\":%d,\"current\":\"%s\","
              "\"busy\":%s,\"battery\":%s,\"battery_mv\":%d,\"percent\":%d,\"charging\":%s,\"usb\":%s,"
              "\"battery_state\":\"%s\",\"ap_mode\":%s,\"ip\":\"%s\",\"wifi_error\":\"%s\","
-             "\"orientation\":\"%s\",\"reset_reason\":%d,\"uptime_s\":%lld,\"version\":\"%s\",\"slot\":\"%s\",\"wifi_ssid\":",
+             "\"orientation\":\"%s\",\"reset_reason\":%d,\"uptime_s\":%lld,\"version\":\"%s\",\"slot\":\"%s\","
+             "\"time\":%lld,\"clock_ok\":%s,\"temp_c\":%s,\"rh\":%s,\"rssi\":%d,\"wifi_ssid\":",
              storage_ok() ? "true" : "false", total, free_bytes, photo_list(NULL, 0), photo_bad_count(),
              display_current(), display_busy() ? "true" : "false", p.battery ? "true" : "false", p.battery_mv,
              p.percent, p.charging ? "true" : "false", p.usb ? "true" : "false", BATT[pmic_battery_level()],
              wifi_is_ap() ? "true" : "false", wifi_ip(), WIFI_ERRS[wifi_last_error()],
              ORIENT_NAMES[g_cfg.orientation], (int) esp_reset_reason(), esp_timer_get_time() / 1000000,
-             ota_version(), ota_slot());
+             ota_version(), ota_slot(), (long long) time(NULL), clock_valid() ? "true" : "false", temp, rh,
+             wifi_rssi());
     json_str(buf, sizeof(buf), g_cfg.wifi_ssid);
     strlcat(buf, "}", sizeof(buf));
     return send_json(req, buf);
@@ -258,20 +268,32 @@ static esp_err_t h_next(httpd_req_t *req) {
 
 static esp_err_t h_settings_get(httpd_req_t *req) {
     app_touch();
-    char buf[512] = "{\"wifi_ssid\":";
+    char buf[1536] = "{\"wifi_ssid\":";
     json_str(buf, sizeof(buf), g_cfg.wifi_ssid);
     strlcat(buf, ",\"ap_ssid\":", sizeof(buf));
     json_str(buf, sizeof(buf), g_cfg.ap_ssid);
     strlcat(buf, ",\"hostname\":", sizeof(buf));
     json_str(buf, sizeof(buf), g_cfg.hostname);
+    const struct { const char *k, *v; } strs[] = {{"tz", g_cfg.tz}, {"change_times", g_cfg.change_times},
+        {"quiet_start", g_cfg.quiet_start}, {"quiet_end", g_cfg.quiet_end}, {"temp_unit", g_cfg.temp_unit},
+        {"ntp_server", g_cfg.ntp_server}, {"cards", g_cfg.cards}, {"zip", g_cfg.zip}, {"lat", g_cfg.lat},
+        {"lon", g_cfg.lon}, {"geo_zone", g_cfg.geo_zone}};
+    for (size_t i = 0; i < sizeof(strs) / sizeof(strs[0]); i++) {
+        strlcat(buf, ",\"", sizeof(buf));
+        strlcat(buf, strs[i].k, sizeof(buf));
+        strlcat(buf, "\":", sizeof(buf));
+        json_str(buf, sizeof(buf), strs[i].v);
+    }
     // Passwords are write-only; only report whether one is set.
     size_t o = strlen(buf);
     snprintf(buf + o, sizeof(buf) - o,
              ",\"wifi_pass_set\":%s,\"ap_pass_set\":%s,\"interval_min\":%d,\"awake_min\":%d,"
-             "\"shuffle\":%s,\"rotate180\":%s,\"orientation\":\"%s\"}",
+             "\"shuffle\":%s,\"rotate180\":%s,\"orientation\":\"%s\",\"status_every\":%d,\"status_min\":%d,"
+             "\"key_status\":%s,\"typeface\":%d,\"auto_setup\":%s,\"has_geo\":%s}",
              g_cfg.wifi_pass[0] ? "true" : "false", g_cfg.ap_pass[0] ? "true" : "false", g_cfg.interval_min,
              g_cfg.awake_min, g_cfg.shuffle ? "true" : "false", g_cfg.rotate180 ? "true" : "false",
-             ORIENT_NAMES[g_cfg.orientation]);
+             ORIENT_NAMES[g_cfg.orientation], g_cfg.status_every, g_cfg.status_min, g_cfg.key_status ? "true" : "false",
+             g_cfg.typeface, g_cfg.auto_setup ? "true" : "false", g_cfg.geo_lat[0] ? "true" : "false");
     return send_json(req, buf);
 }
 
@@ -303,7 +325,14 @@ static esp_err_t h_settings_post(httpd_req_t *req) {
 #define INT_FIELD(name) \
     if (httpd_query_key_value(body, #name, v, sizeof(v)) == ESP_OK) c.name = atoi(v) < 0 ? 0 : atoi(v);
     STR_FIELD(wifi_ssid) STR_FIELD(wifi_pass) STR_FIELD(ap_ssid) STR_FIELD(ap_pass) STR_FIELD(hostname)
+    STR_FIELD(tz) STR_FIELD(change_times) STR_FIELD(quiet_start) STR_FIELD(quiet_end) STR_FIELD(temp_unit)
+    STR_FIELD(ntp_server) STR_FIELD(cards) STR_FIELD(zip) STR_FIELD(lat) STR_FIELD(lon)
     INT_FIELD(interval_min) INT_FIELD(awake_min) INT_FIELD(shuffle) INT_FIELD(rotate180)
+    INT_FIELD(status_every) INT_FIELD(status_min) INT_FIELD(key_status) INT_FIELD(typeface) INT_FIELD(auto_setup)
+    if (c.typeface >= TYPEFACE_COUNT) c.typeface = 0;
+    // POSIX TZ strings only use these; anything else is a mistake or an attempt to inject markup.
+    if (strspn(c.tz, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789,.:/+-<>") != strlen(c.tz))
+        return send_err(req, "400 Bad Request", "time zone invalid");
     if (httpd_query_key_value(body, "orientation", v, sizeof(v)) == ESP_OK) {
         int o = -1;
         for (int i = 0; i < 3; i++)
@@ -312,10 +341,21 @@ static esp_err_t h_settings_post(httpd_req_t *req) {
         c.orientation = (orient_t) o;
     }
     if (!c.ap_ssid[0] || !c.hostname[0]) return send_err(req, "400 Bad Request", "AP name and hostname required");
+    // The hostname becomes a DNS label: letters, digits, hyphens.
+    if (strspn(c.hostname, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") != strlen(c.hostname))
+        return send_err(req, "400 Bad Request", "hostname: letters, digits and - only");
+    if (c.status_every != 30 && c.status_every != 60) c.status_every = 0;
+    if (c.status_min < 1) c.status_min = 1;
     if (!wifi_pass_valid(c.wifi_pass)) return send_err(req, "400 Bad Request", "Wi-Fi password must be 8-63 chars");
     if (!wifi_pass_valid(c.ap_pass)) return send_err(req, "400 Bad Request", "AP password must be 8-63 chars");
     bool turned = c.orientation != g_cfg.orientation;
+    bool tz_changed = strcmp(c.tz, g_cfg.tz) != 0;
     g_cfg = c;
+    if (tz_changed) {
+        setenv("TZ", g_cfg.tz[0] ? g_cfg.tz : "UTC0", 1);
+        tzset();
+    }
+    app_schedule_changed(); // interval, set times, quiet hours or status timing may have changed
     if (!config_save()) return send_err(req, "500 Internal Server Error", "could not save config.txt");
     // Frame turned: switch to a photo cropped for the new orientation (or the matching status screen).
     if (turned) display_request(NULL);
@@ -349,6 +389,24 @@ static esp_err_t h_wifi_scan(httpd_req_t *req) {
     app_touch();
     wifi_scan();
     return send_networks(req);
+}
+
+// POST /api/time  body: epoch=<seconds>. The web UI sends the browser's clock on load: that's how the frame
+// gets the time without internet access. Small differences are ignored to avoid needless RTC writes.
+static esp_err_t h_time(httpd_req_t *req) {
+    REQUIRE_CSRF(req);
+    char body[48] = "", v[24];
+    int n = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (n <= 0) return send_err(req, "400 Bad Request", "no body");
+    body[n] = 0;
+    if (httpd_query_key_value(body, "epoch", v, sizeof(v)) != ESP_OK) return send_err(req, "400 Bad Request", "epoch missing");
+    long long t = atoll(v);
+    if (t < 1735689600LL) return send_err(req, "400 Bad Request", "implausible time"); // before 2025
+    if (llabs(t - (long long) time(NULL)) > 30) {
+        clock_set((time_t) t);
+        app_schedule_changed();
+    }
+    return send_ok(req);
 }
 
 // POST /api/ota   body: the app image (build/photoframe.bin). Restarts into it on success.
@@ -388,6 +446,13 @@ static esp_err_t h_ota(httpd_req_t *req) {
     return ESP_OK;
 }
 
+static esp_err_t h_show_status(httpd_req_t *req) {
+    REQUIRE_CSRF(req);
+    app_touch();
+    app_show_status();
+    return send_ok(req);
+}
+
 static esp_err_t h_sleep(httpd_req_t *req) {
     REQUIRE_CSRF(req);
     send_ok(req);
@@ -400,6 +465,25 @@ static esp_err_t h_reboot(httpd_req_t *req) {
     send_ok(req);
     app_request_reboot();
     return ESP_OK;
+}
+
+// DNS rebinding defence. A malicious web page can point its own domain at the frame's IP, and the
+// browser then treats it as same-origin (so X-PF no longer helps). The Host header still carries that
+// foreign domain, so only accept requests addressed to an IP literal or this frame's own names.
+static bool host_ok(httpd_req_t *req) {
+    char host[80];
+    if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return false;
+    host[strcspn(host, ":")] = 0; // drop the port
+    if (host[0] && strspn(host, "0123456789.") == strlen(host)) return true;
+    char local[48];
+    snprintf(local, sizeof(local), "%s.local", g_cfg.hostname);
+    return !strcasecmp(host, g_cfg.hostname) || !strcasecmp(host, local);
+}
+
+// Every route goes through here; user_ctx holds the real handler.
+static esp_err_t guarded(httpd_req_t *req) {
+    if (!host_ok(req)) return send_err(req, "421 Misdirected Request", "unexpected Host header");
+    return ((esp_err_t(*)(httpd_req_t *)) req->user_ctx)(req);
 }
 
 void web_start(void) {
@@ -425,10 +509,16 @@ void web_start(void) {
         {.uri = "/api/wifi", .method = HTTP_GET, .handler = h_wifi_get},
         {.uri = "/api/wifi/scan", .method = HTTP_POST, .handler = h_wifi_scan},
         {.uri = "/api/ota", .method = HTTP_POST, .handler = h_ota},
+        {.uri = "/api/time", .method = HTTP_POST, .handler = h_time},
+        {.uri = "/api/show_status", .method = HTTP_POST, .handler = h_show_status},
         {.uri = "/api/sleep", .method = HTTP_POST, .handler = h_sleep},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = h_reboot},
     };
-    for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++)
-        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &routes[i]));
+    for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
+        httpd_uri_t r = routes[i];
+        r.user_ctx = (void *) r.handler;
+        r.handler = guarded;
+        ESP_ERROR_CHECK(httpd_register_uri_handler(server, &r));
+    }
     ESP_LOGI(TAG, "web UI on http://%s/", wifi_ip());
 }
