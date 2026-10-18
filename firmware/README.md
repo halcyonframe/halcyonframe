@@ -91,12 +91,25 @@ idf.py -p /dev/cu.usbmodem* flash monitor
 
 To get back to the vendor firmware, flash `03 Firmware/ESP32-S3-PhotoPainter-factory.bin` at offset 0x0.
 
+## Firmware updates
+
+After the first USB flash, there's no need for a cable:
+
+- **Web:** Settings → Firmware → choose `build/photoframe.bin` → Install. It takes about 30 s, then the frame restarts.
+- **TF card:** copy `photoframe.bin` to the card root as `firmware.bin` and restart the frame (or power it on). It's renamed to `firmware.done`, or `firmware.failed` if it wasn't valid.
+
+The image goes into the inactive app slot (two 6 MB slots; `partitions.csv`) and is checked before the frame switches to it. A new firmware has to reach a working web UI (or its first deep sleep) to confirm itself. If it resets before that, the bootloader goes back to the previous firmware. A new firmware that *hangs* without resetting needs a power cycle (hold PWR 4 s, then press it) to trigger the rollback.
+
+Installs aren't refused on low battery, only when it's critical. Like the rest of the API, there's no authentication beyond `X-PF`: anyone on your network can install firmware.
+
+The partition table and bootloader settings can only be changed over USB. Moving from an older build without OTA slots needs one USB flash.
+
 ## HTTP API
 
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/` | Web UI (embedded in the firmware) |
-| GET | `/api/status` | Battery (and `battery_state` ok/low/critical), TF space, photo count, `bad_photos`, current photo, busy flag, IP, `wifi_ssid`, `wifi_error` (auth/not_found/other), `orientation`, `reset_reason` (`esp_reset_reason_t`: 1 power-on, 3 restart, 4 crash, 6 watchdog, 9 brownout, 11 USB), `uptime_s`. Polling it does not keep the frame awake. |
+| GET | `/api/status` | Battery (and `battery_state` ok/low/critical), TF space, photo count, `bad_photos`, current photo, busy flag, IP, `wifi_ssid`, `wifi_error` (auth/not_found/other), `orientation`, `version`, `reset_reason` (`esp_reset_reason_t`: 1 power-on, 3 restart, 4 crash, 6 watchdog, 9 brownout, 11 USB), `uptime_s`. Polling it does not keep the frame awake. |
 | GET | `/api/photos` | `{"photos":[ids…]}` sorted oldest first |
 | GET | `/photos/<id>.jpg` / `.epd` | Stored files |
 | POST | `/api/upload?id=<id>&type=jpg\|epd[&show=1\|0]` | Raw body. `epd` must be exactly 192000 bytes. Upload `jpg` first, since a photo only appears once its `.epd` exists. `show=1`: show now. No `show`: shown only if a setup or status screen is up. `show=0`: never touches the panel. |
@@ -105,6 +118,7 @@ To get back to the vendor firmware, flash `03 Firmware/ESP32-S3-PhotoPainter-fac
 | POST | `/api/show?id=<id>`, `/api/next` | Queue a refresh |
 | POST | `/api/delete?id=<id>` | |
 | GET/POST | `/api/settings` | POST is form-urlencoded; only fields present are changed; passwords are write-only |
+| POST | `/api/ota` | Raw body: the app image. Installs it, then restarts. 400 if it isn't a valid image for this chip. |
 | POST | `/api/sleep`, `/api/reboot` | |
 
 Ids are `[A-Za-z0-9_-]{1,32}`. The UI uses base-36 timestamps, so name order is upload order, and appends `_cw` or `_ccw` to portrait photos. That suffix is how the frame knows which orientation a photo was cropped for.
@@ -122,5 +136,6 @@ Every POST must include an `X-PF: 1` header. This forces a CORS preflight, which
 | `main/storage.c` | TF card mount, `config.txt`, photo files |
 | `main/wifi.c` | STA with SoftAP fallback, mDNS |
 | `main/web.c` | HTTP server and API |
+| `main/ota.c` | Firmware updates (web upload, `firmware.bin` on the card, rollback confirmation) |
 | `main/pmic.cpp` | AXP2101 rails, battery status (via vendored `components/XPowersLib`, MIT; patched to use a 1 s I2C timeout instead of waiting forever) |
 | `main/www/index.html` | UI and the image pipeline (the `<script id="core">` block is DOM-free and unit-testable) |

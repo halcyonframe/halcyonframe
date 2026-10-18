@@ -4,6 +4,7 @@
 #include "app.h"
 #include "board.h"
 #include "display.h"
+#include "ota.h"
 #include "pmic.h"
 #include "storage.h"
 #include "wifi.h"
@@ -107,12 +108,13 @@ static esp_err_t h_status(httpd_req_t *req) {
              "{\"sd\":%s,\"sd_total\":%llu,\"sd_free\":%llu,\"photos\":%d,\"bad_photos\":%d,\"current\":\"%s\","
              "\"busy\":%s,\"battery\":%s,\"battery_mv\":%d,\"percent\":%d,\"charging\":%s,\"usb\":%s,"
              "\"battery_state\":\"%s\",\"ap_mode\":%s,\"ip\":\"%s\",\"wifi_error\":\"%s\","
-             "\"orientation\":\"%s\",\"reset_reason\":%d,\"uptime_s\":%lld,\"wifi_ssid\":",
+             "\"orientation\":\"%s\",\"reset_reason\":%d,\"uptime_s\":%lld,\"version\":\"%s\",\"slot\":\"%s\",\"wifi_ssid\":",
              storage_ok() ? "true" : "false", total, free_bytes, photo_list(NULL, 0), photo_bad_count(),
              display_current(), display_busy() ? "true" : "false", p.battery ? "true" : "false", p.battery_mv,
              p.percent, p.charging ? "true" : "false", p.usb ? "true" : "false", BATT[pmic_battery_level()],
              wifi_is_ap() ? "true" : "false", wifi_ip(), WIFI_ERRS[wifi_last_error()],
-             ORIENT_NAMES[g_cfg.orientation], (int) esp_reset_reason(), esp_timer_get_time() / 1000000);
+             ORIENT_NAMES[g_cfg.orientation], (int) esp_reset_reason(), esp_timer_get_time() / 1000000,
+             ota_version(), ota_slot());
     json_str(buf, sizeof(buf), g_cfg.wifi_ssid);
     strlcat(buf, "}", sizeof(buf));
     return send_json(req, buf);
@@ -349,6 +351,43 @@ static esp_err_t h_wifi_scan(httpd_req_t *req) {
     return send_networks(req);
 }
 
+// POST /api/ota   body: the app image (build/photoframe.bin). Restarts into it on success.
+typedef struct {
+    httpd_req_t *req;
+    size_t left;
+    int timeouts;
+} ota_upload_t;
+
+static int ota_recv(void *ctx, char *buf, size_t len) {
+    ota_upload_t *u = ctx;
+    while (u->left > 0) {
+        int r = httpd_req_recv(u->req, buf, u->left < len ? u->left : len);
+        if (r == HTTPD_SOCK_ERR_TIMEOUT && ++u->timeouts < MAX_RECV_TIMEOUTS) continue;
+        if (r <= 0) return -1;
+        u->left -= r;
+        app_touch();
+        return r;
+    }
+    return 0;
+}
+
+static esp_err_t h_ota(httpd_req_t *req) {
+    REQUIRE_CSRF(req);
+    app_touch();
+    if (req->content_len == 0) return send_err(req, "400 Bad Request", "empty file");
+    if (pmic_battery_level() == BATT_CRITICAL) return send_err(req, "503 Service Unavailable", "battery too low, charge first");
+    ota_upload_t u = {req, req->content_len, 0};
+    esp_err_t err = ota_install(ota_recv, &u);
+    if (err != ESP_OK) {
+        char msg[96];
+        snprintf(msg, sizeof(msg), "not a valid firmware file for this frame (%s)", esp_err_to_name(err));
+        return send_err(req, "400 Bad Request", msg);
+    }
+    send_ok(req);
+    app_request_reboot();
+    return ESP_OK;
+}
+
 static esp_err_t h_sleep(httpd_req_t *req) {
     REQUIRE_CSRF(req);
     send_ok(req);
@@ -365,7 +404,7 @@ static esp_err_t h_reboot(httpd_req_t *req) {
 
 void web_start(void) {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 16;
+    cfg.max_uri_handlers = 20;
     cfg.stack_size = 8192;
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn = httpd_uri_match_wildcard;
@@ -385,6 +424,7 @@ void web_start(void) {
         {.uri = "/api/settings", .method = HTTP_POST, .handler = h_settings_post},
         {.uri = "/api/wifi", .method = HTTP_GET, .handler = h_wifi_get},
         {.uri = "/api/wifi/scan", .method = HTTP_POST, .handler = h_wifi_scan},
+        {.uri = "/api/ota", .method = HTTP_POST, .handler = h_ota},
         {.uri = "/api/sleep", .method = HTTP_POST, .handler = h_sleep},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = h_reboot},
     };

@@ -52,7 +52,9 @@
 
 #endif //ESP_PLATFORM
 
-#define XPOWERSLIB_I2C_MASTER_SPEED            400000
+// PhotoFrame patch: was 400000. The PhotoPainter's I2C bus has 10k pull-ups and five chips on it; at 400 kHz
+// the edges are too slow and reads NACK intermittently. PMIC reads are tiny, so 100 kHz costs nothing.
+#define XPOWERSLIB_I2C_MASTER_SPEED            100000
 
 
 #ifdef _BV

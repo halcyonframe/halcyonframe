@@ -155,6 +155,17 @@ form.settings label { display: grid; gap: 3px; font-size: 13px; color: var(--mut
     </div>
     <p class="hint">Settings are stored in <code>config.txt</code> on the TF card. Photos live in <code>/photos</code>. Press KEY on the frame to wake it, and KEY again to show this page's address on the frame. BOOT shows the next photo.</p>
   </section>
+  <section>
+    <h2>Firmware</h2>
+    <p class="hint" id="fwVersion"></p>
+    <div class="row">
+      <input type="file" id="fwFile" accept=".bin,application/octet-stream">
+      <button id="btnFw" disabled>Install</button>
+    </div>
+    <progress id="fwProg" value="0" max="1" hidden style="width:100%"></progress>
+    <div id="fwMsg"></div>
+    <p class="hint">Use <code>photoframe.bin</code> from the build. If the new firmware doesn't start properly, the frame goes back to the current one by itself. Without the web page, copy the file to the card as <code>firmware.bin</code> and restart the frame.</p>
+  </section>
 </main>
 <div id="toast"></div>
 
@@ -328,6 +339,11 @@ async function refreshStatus() {
     ].filter(Boolean).join('<span>·</span>');
     if (s.current !== current) { current = s.current; markCurrent(); }
     if (s.orientation !== frameOrient) { frameOrient = s.orientation; orientationChanged(); }
+    $('#fwVersion').textContent = `Running version ${s.version}.`;
+    if (fwWaiting && s.uptime_s < 300) {
+      fwWaiting = false;
+      $('#fwMsg').textContent = `The frame restarted and is running version ${s.version}.`;
+    }
     const b = [];
     if (!s.sd) b.push(['bad', 'No TF card in the frame. Insert a FAT32 card, then press KEY on the frame.']);
     if (s.ap_mode && s.wifi_ssid && s.wifi_error) b.push(['bad', `The frame couldn't join "${s.wifi_ssid}": ${WIFI_ERR[s.wifi_error]} Fix it under Settings below, then Save & connect.`]);
@@ -339,8 +355,9 @@ async function refreshStatus() {
     if (pinnedBanner) b.unshift(pinnedBanner);
     setBanners(b);
   } catch {
-    $('#status').textContent = 'Frame unreachable (asleep?)';
-    if (pinnedBanner) setBanners([pinnedBanner]);
+    $('#status').textContent = 'Frame not answering';
+    // Usually it went to sleep (nothing on the panel changes when it does). This page reconnects by itself.
+    setBanners([pinnedBanner || ['bad', "The frame isn't answering. It's probably asleep: press KEY on the frame to wake it. This page reconnects by itself once it's back."]]);
   }
   statusTimer = setTimeout(refreshStatus, busy ? 3000 : 15000);
 }
@@ -637,6 +654,36 @@ $('#file').onchange = e => { addFiles(e.target.files); e.target.value = ''; };
 drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
 drop.addEventListener('dragleave', () => drop.classList.remove('over'));
 drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); addFiles(e.dataTransfer.files); });
+
+/* ---------- firmware update ---------- */
+let fwWaiting = false;
+$('#fwFile').onchange = () => { $('#btnFw').disabled = !$('#fwFile').files.length; };
+$('#btnFw').onclick = () => {
+  const f = $('#fwFile').files[0];
+  if (!f || !confirm(`Install ${f.name} on the frame? It restarts when done.`)) return;
+  $('#btnFw').disabled = true;
+  $('#fwProg').hidden = false;
+  $('#fwMsg').textContent = 'Uploading…';
+  // XHR rather than fetch: fetch can't report upload progress.
+  const x = new XMLHttpRequest();
+  x.open('POST', '/api/ota');
+  x.setRequestHeader('X-PF', '1');
+  x.upload.onprogress = e => { $('#fwProg').max = e.total; $('#fwProg').value = e.loaded; if (e.loaded === e.total) $('#fwMsg').textContent = 'Checking and installing…'; };
+  x.onload = () => {
+    let j = {};
+    try { j = JSON.parse(x.responseText); } catch {}
+    if (x.status === 200 && j.ok) {
+      fwWaiting = true;
+      $('#fwMsg').textContent = 'Installed. The frame is restarting; this page reconnects by itself in about 30 seconds.';
+    } else {
+      $('#fwMsg').textContent = `Not installed: ${j.error || x.statusText || 'upload failed'}. The frame keeps its current firmware.`;
+      $('#btnFw').disabled = false;
+    }
+    $('#fwProg').hidden = true;
+  };
+  x.onerror = () => { $('#fwMsg').textContent = 'Upload failed (connection lost). The frame keeps its current firmware.'; $('#btnFw').disabled = false; $('#fwProg').hidden = true; };
+  x.send(f);
+};
 
 /* ---------- settings ---------- */
 const form = $('#settings');

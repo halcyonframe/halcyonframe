@@ -13,6 +13,7 @@
 #include "board.h"
 #include "display.h"
 #include "epd.h"
+#include "ota.h"
 #include "pmic.h"
 #include "storage.h"
 #include "web.h"
@@ -82,7 +83,11 @@ static int sleep_minutes(void) {
 }
 
 static void deep_sleep(int wake_min) {
-    while (display_busy() || storage_writing()) vTaskDelay(pdMS_TO_TICKS(200)); // never cut a refresh or SD write
+    // Never cut a refresh, an SD write or a firmware update short.
+    while (display_busy() || storage_writing() || ota_busy()) vTaskDelay(pdMS_TO_TICKS(200));
+    // Waking from sleep is a reset: a new firmware that got this far must confirm itself first, or the
+    // bootloader would roll it back on the next wake.
+    ota_mark_good();
     // These screens only make sense while someone is interacting; put the photo back before sleeping.
     screen_t s = display_shown_screen();
     if ((s == SCR_WIFI_FAIL || s == SCR_INFO) && storage_ok()) {
@@ -141,7 +146,7 @@ static void awake_loop(void) {
 
         if (want_reboot) {
             vTaskDelay(pdMS_TO_TICKS(500)); // let the HTTP response flush
-            while (display_busy() || storage_writing()) vTaskDelay(pdMS_TO_TICKS(200));
+            while (display_busy() || storage_writing() || ota_busy()) vTaskDelay(pdMS_TO_TICKS(200));
             esp_restart();
         }
         // The reset info screen has had its minute: back to the photo (unless someone moved on already).
@@ -149,7 +154,7 @@ static void awake_loop(void) {
             boot_info_pending = false;
             if (display_shown_screen() == SCR_INFO) show_normal();
         }
-        bool idle = g_cfg.awake_min > 0 && !display_busy() &&
+        bool idle = g_cfg.awake_min > 0 && !display_busy() && !ota_busy() &&
                     now_ms() - atomic_load(&last_activity_ms) > g_cfg.awake_min * 60000U;
         if (want_sleep || idle) {
             vTaskDelay(pdMS_TO_TICKS(500));
@@ -176,7 +181,17 @@ void app_main(void) {
     static const char *const REASONS[] = {"unknown", "power-on", "external", "software", "panic", "int-watchdog",
                                           "task-watchdog", "watchdog", "deep-sleep", "brownout", "sdio",
                                           "usb", "jtag", "efuse", "power-glitch", "cpu-lockup"}; // esp_reset_reason_t order
-    ESP_LOGI(TAG, "reset reason: %s", why < sizeof(REASONS) / sizeof(REASONS[0]) ? REASONS[why] : "other");
+    ESP_LOGI(TAG, "reset reason: %s, firmware %s", why < sizeof(REASONS) / sizeof(REASONS[0]) ? REASONS[why] : "other",
+             ota_version());
+
+    // firmware.bin on the card: install and restart into it. Not on a nearly empty battery, where power
+    // could fail mid-write (the old firmware would still boot, but there's no point trying).
+    if (sd && pmic_battery_level() != BATT_CRITICAL) {
+        gpio_set_level(PIN_LED_GREEN, 0);
+        bool installed = ota_from_card();
+        gpio_set_level(PIN_LED_GREEN, 1);
+        if (installed) esp_restart();
+    }
 
     esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
     bool boot_btn = cause == ESP_SLEEP_WAKEUP_EXT1 && (esp_sleep_get_ext1_wakeup_status() & BIT64(PIN_BTN_BOOT));
@@ -204,6 +219,7 @@ void app_main(void) {
     wifi_start();
     wifi_up = true;
     web_start();
+    ota_mark_good(); // Wi-Fi and the web UI came up: this firmware is good enough to keep
 
     if (sd) {
         // After a reset (not a wake from sleep), spend the first minute showing where to find the frame and
