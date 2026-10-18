@@ -1,0 +1,7 @@
+# Vendor reference material (large zips/bins); kept locally, not versioned
+/01 Example/
+/02 SDCARD/
+/03 Firmware/
+.DS_Store
+.claude/
+.remember/

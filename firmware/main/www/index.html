@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhotoFrame</title>
+<style>
+:root {
+  --bg: #f6f6f4; --card: #fff; --fg: #1d1d1f; --muted: #6b6b70; --line: #deded9;
+  --accent: #2157ba; --danger: #b21318; --ok: #125f20;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #151517; --card: #1f1f22; --fg: #ececee; --muted: #9a9aa0; --line: #333338; --accent: #6d9bff; --danger: #ff6b6b; --ok: #5fcf7a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--card); position: sticky; top: 0; z-index: 2; }
+header h1 { font-size: 17px; margin: 0; margin-right: auto; }
+#status { color: var(--muted); font-size: 13px; display: flex; gap: 14px; flex-wrap: wrap; }
+#status .busy { color: var(--accent); font-weight: 600; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+button, .btn { font: inherit; padding: 7px 14px; border-radius: 7px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { color: var(--danger); }
+button:disabled { opacity: .5; cursor: default; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+#drop { border: 2px dashed var(--line); border-radius: 10px; padding: 28px; text-align: center; color: var(--muted); cursor: pointer; }
+#drop.over { border-color: var(--accent); color: var(--accent); }
+#editor { display: none; grid-template-columns: minmax(0, 1fr) 260px; gap: 16px; margin-top: 16px; }
+#editor.open { display: grid; }
+@media (max-width: 760px) { #editor.open { grid-template-columns: 1fr; } }
+#preview { display: block; max-width: 100%; max-height: 70vh; margin: 0 auto; border-radius: 6px; background: #ccc; touch-action: none; cursor: grab; image-rendering: pixelated; }
+.ctl { display: grid; gap: 10px; align-content: start; }
+.ctl label { display: grid; gap: 2px; font-size: 13px; color: var(--muted); }
+.ctl label.check { display: flex; gap: 6px; align-items: center; color: var(--fg); }
+select, input[type=text], input[type=password], input[type=number] { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); width: 100%; }
+input[type=range] { width: 100%; }
+#gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.ph { border: 2px solid transparent; border-radius: 8px; overflow: hidden; background: var(--bg); }
+.ph.current { border-color: var(--accent); }
+.ph img, .ph canvas { width: 100%; aspect-ratio: 5 / 3; object-fit: contain; display: block; background: #ddd; }
+.ph .row { padding: 6px; justify-content: space-between; }
+.ph button { padding: 4px 10px; font-size: 13px; }
+form.settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+form.settings label { display: grid; gap: 3px; font-size: 13px; color: var(--muted); }
+.hint { font-size: 12px; color: var(--muted); }
+#toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+#toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>PhotoFrame</h1>
+  <div id="status">Loading…</div>
+  <div class="row">
+    <button id="btnNext">Next photo</button>
+    <button id="btnSleep">Sleep now</button>
+  </div>
+</header>
+
+<main>
+  <section>
+    <h2>Add photos</h2>
+    <div id="drop">Drop images here or click to choose<input id="file" type="file" accept="image/*" multiple hidden></div>
+    <div id="editor">
+      <div>
+        <canvas id="preview"></canvas>
+        <div class="hint">Preview shows the panel's real colors. Drag to reposition when cropping.</div>
+      </div>
+      <div class="ctl">
+        <div class="hint" id="queueInfo"></div>
+        <label>Orientation
+          <select id="orient">
+            <option value="land">Landscape</option>
+            <option value="ccw">Portrait (frame turned left)</option>
+            <option value="cw">Portrait (frame turned right)</option>
+          </select>
+        </label>
+        <label>Fit
+          <select id="fit"><option value="cover">Fill (crop)</option><option value="contain">Fit (white borders)</option></select>
+        </label>
+        <label>Zoom <input id="zoom" type="range" min="1" max="3" step="0.01" value="1"></label>
+        <label>Brightness <input id="bright" type="range" min="-60" max="60" value="0"></label>
+        <label>Contrast <input id="contrast" type="range" min="-60" max="60" value="0"></label>
+        <label>Saturation <input id="sat" type="range" min="0" max="200" value="120"></label>
+        <label>Dither strength <input id="strength" type="range" min="0" max="100" value="100"></label>
+        <label class="check"><input id="showNow" type="checkbox" checked> Show on frame after upload</label>
+        <div class="row">
+          <button class="primary" id="btnUpload">Upload</button>
+          <button id="btnSkip">Skip</button>
+          <button id="btnReset">Reset</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="row" style="justify-content:space-between"><h2>Photos on the frame</h2><span class="hint" id="count"></span></div>
+    <div id="gallery"></div>
+  </section>
+
+  <section>
+    <h2>Settings</h2>
+    <form class="settings" id="settings">
+      <label>Wi-Fi network (blank = access point only)<input type="text" name="wifi_ssid" maxlength="32" autocomplete="off"></label>
+      <label>Wi-Fi password<input type="password" name="wifi_pass" maxlength="64" autocomplete="new-password"></label>
+      <label>Access point name<input type="text" name="ap_ssid" maxlength="32" required></label>
+      <label>Access point password (8+ chars, blank = open)<input type="password" name="ap_pass" maxlength="64" autocomplete="new-password"></label>
+      <label>Hostname (http://name.local)<input type="text" name="hostname" maxlength="32" pattern="[A-Za-z0-9\-]+" required></label>
+      <label>Change photo every (minutes, 0 = never)<input type="number" name="interval_min" min="0" max="10080"></label>
+      <label>Sleep after inactivity (minutes, 0 = never)<input type="number" name="awake_min" min="0" max="1440"></label>
+      <label class="check" style="display:flex;gap:6px;align-items:center;color:var(--fg)"><input type="checkbox" name="shuffle"> Shuffle</label>
+      <label class="check" style="display:flex;gap:6px;align-items:center;color:var(--fg)"><input type="checkbox" name="rotate180"> Panel mounted upside down (stock frame)</label>
+    </form>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="btnSave">Save</button>
+      <button id="btnReboot">Reboot (applies Wi-Fi changes)</button>
+    </div>
+    <p class="hint">Settings are stored in <code>config.txt</code> on the TF card. Photos live in <code>/photos</code>. Press KEY to wake the web UI; BOOT shows the next photo.</p>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script id="core">
+// Image pipeline. No DOM access here so it can be unit-tested outside a browser.
+const W = 800, H = 480;
+// Panel color codes and the colors the Spectra 6 panel actually shows. Dithering against the real
+// (muted) colors instead of pure RGB is what keeps photos from looking washed out or blotchy.
+// The values are approximate measurements; adjust them if your panel looks different.
+const PALETTE = [
+  { code: 0, rgb: [25, 30, 33] },    // black
+  { code: 1, rgb: [232, 232, 232] }, // white
+  { code: 2, rgb: [239, 222, 68] },  // yellow
+  { code: 3, rgb: [178, 19, 24] },   // red
+  { code: 5, rgb: [33, 87, 186] },   // blue
+  { code: 6, rgb: [18, 95, 32] },    // green
+];
+
+// Error is diffused in linear light (so the average of the dots matches the source brightness) and each
+// pixel is matched to the closest panel color in OKLab (a perceptually uniform space). Doing both in sRGB
+// makes greys drift pink and dark tones turn muddy.
+const LIN = new Float32Array(256);
+for (let i = 0; i < 256; i++) { const c = i / 255; LIN[i] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }
+
+function oklab(r, g, b) { // linear RGB in, [L, a, b] out
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+          1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+          0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s];
+}
+const PAL_LIN = PALETTE.map(p => p.rgb.map(v => LIN[v]));
+const PAL_LAB = PAL_LIN.map(c => oklab(c[0], c[1], c[2]));
+
+function nearest(r, g, b) { // linear RGB in, palette index out
+  const q = oklab(r, g, b);
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < PAL_LAB.length; i++) {
+    const p = PAL_LAB[i], d = (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2 + (q[2] - p[2]) ** 2;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+// Brightness/contrast/saturation on RGBA pixels. Returns a Float32 linear-RGB working buffer for dither().
+function adjust(rgba, n, { bright = 0, contrast = 0, sat = 100 }) {
+  const out = new Float32Array(n * 3);
+  const c = (100 + contrast) / 100, s = sat / 100, b = bright * 2.55;
+  const to8 = v => { v = Math.round(v); return LIN[v < 0 ? 0 : v > 255 ? 255 : v]; };
+  for (let i = 0; i < n; i++) {
+    let r = rgba[i * 4], g = rgba[i * 4 + 1], bl = rgba[i * 4 + 2];
+    const l = 0.299 * r + 0.587 * g + 0.114 * bl;
+    r = l + (r - l) * s; g = l + (g - l) * s; bl = l + (bl - l) * s;
+    out[i * 3] = to8((r - 128) * c + 128 + b);
+    out[i * 3 + 1] = to8((g - 128) * c + 128 + b);
+    out[i * 3 + 2] = to8((bl - 128) * c + 128 + b);
+  }
+  return out;
+}
+
+// Serpentine Floyd–Steinberg over a linear-RGB buffer (modified in place). Returns palette indices.
+// strength scales the diffused error (1 = classic FS, 0 = plain nearest-color mapping).
+function dither(px, w, h, strength = 1) {
+  const idx = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const ltr = (y & 1) === 0, dx = ltr ? 1 : -1;
+    for (let k = 0; k < w; k++) {
+      const x = ltr ? k : w - 1 - k, o = (y * w + x) * 3;
+      // Clamp so accumulated error can't run away in areas outside the panel's gamut.
+      const r = Math.min(1, Math.max(0, px[o])), g = Math.min(1, Math.max(0, px[o + 1])), b = Math.min(1, Math.max(0, px[o + 2]));
+      const p = nearest(r, g, b);
+      idx[y * w + x] = p;
+      const c = PAL_LIN[p];
+      const er = (r - c[0]) * strength, eg = (g - c[1]) * strength, eb = (b - c[2]) * strength;
+      const spread = (xx, yy, f) => {
+        if (xx < 0 || xx >= w || yy >= h) return;
+        const j = (yy * w + xx) * 3;
+        px[j] += er * f; px[j + 1] += eg * f; px[j + 2] += eb * f;
+      };
+      spread(x + dx, y, 7 / 16);
+      spread(x - dx, y + 1, 3 / 16);
+      spread(x, y + 1, 5 / 16);
+      spread(x + dx, y + 1, 1 / 16);
+    }
+  }
+  return idx;
+}
+
+// Packs palette indices from the viewer-oriented image (vw x vh) into the 800x480 panel frame:
+// 4 bits per pixel, left pixel in the high nibble. Portrait images are rotated into landscape here.
+function pack(idx, vw, vh, orient) {
+  const buf = new Uint8Array(W * H / 2);
+  for (let py = 0; py < H; py++) {
+    for (let px = 0; px < W; px++) {
+      let vx, vy;
+      if (orient === 'cw') { vx = py; vy = vh - 1 - px; }       // frame turned right: panel top is viewer's right
+      else if (orient === 'ccw') { vx = vw - 1 - py; vy = px; } // frame turned left
+      else { vx = px; vy = py; }
+      const code = PALETTE[idx[vy * vw + vx]].code;
+      const a = (py * W + px) >> 1;
+      buf[a] |= (px & 1) ? code : code << 4;
+    }
+  }
+  return buf;
+}
+
+// Inverse of pack for landscape display of a stored frame (used when a thumbnail is missing).
+function unpackToRGBA(buf) {
+  const rgba = new Uint8ClampedArray(W * H * 4);
+  const byCode = {};
+  PALETTE.forEach(p => byCode[p.code] = p.rgb);
+  for (let i = 0; i < W * H; i++) {
+    const code = (i & 1) ? buf[i >> 1] & 15 : buf[i >> 1] >> 4;
+    const c = byCode[code] || [255, 255, 255];
+    rgba.set([c[0], c[1], c[2], 255], i * 4);
+  }
+  return rgba;
+}
+
+// Lexically sortable id: base36 ms timestamp stays 8 chars until the year 2059.
+function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+if (typeof module !== 'undefined') module.exports = { PALETTE, LIN, PAL_LIN, PAL_LAB, nearest, adjust, dither, pack, unpackToRGBA, newId, W, H };
+</script>
+
+<script>
+const $ = s => document.querySelector(s);
+const toast = msg => { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 3000); };
+
+async function api(path, opts = {}) {
+  // The firmware rejects POSTs without this header (cross-site request protection).
+  const r = await fetch(path, { ...opts, headers: { 'X-PF': '1', ...opts.headers } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.ok === false) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+/* ---------- status ---------- */
+let current = '', statusTimer;
+async function refreshStatus() {
+  clearTimeout(statusTimer);
+  let busy = false;
+  try {
+    const s = await api('/api/status');
+    busy = s.busy;
+    const gb = v => (v / 1e9).toFixed(1);
+    const bat = s.battery ? `${s.percent}%${s.charging ? ' ⚡' : ''}` : (s.usb ? 'USB' : '—');
+    $('#status').innerHTML = [
+      s.busy ? '<span class="busy">Refreshing display…</span>' : '',
+      `Battery ${bat}`,
+      s.sd ? `TF ${gb(s.sd_free)} / ${gb(s.sd_total)} GB free` : '<span style="color:var(--danger)">No TF card</span>',
+      s.ap_mode ? `Access point ${s.ip}` : s.ip,
+    ].filter(Boolean).join('<span>·</span>');
+    if (s.current !== current) { current = s.current; markCurrent(); }
+  } catch { $('#status').textContent = 'Frame unreachable (asleep?)'; }
+  statusTimer = setTimeout(refreshStatus, busy ? 3000 : 15000);
+}
+
+/* ---------- gallery ---------- */
+async function loadGallery() {
+  const { photos } = await api('/api/photos');
+  $('#count').textContent = `${photos.length} photo${photos.length === 1 ? '' : 's'}`;
+  const g = $('#gallery');
+  g.innerHTML = '';
+  for (const id of photos.slice().reverse()) {
+    const el = document.createElement('div');
+    el.className = 'ph';
+    el.dataset.id = id;
+    el.innerHTML = `<img loading="lazy" alt=""><div class="row"><button data-act="show">Show</button><button class="danger" data-act="del">Delete</button></div>`;
+    const img = el.querySelector('img');
+    img.onerror = () => renderFromFrame(id, img); // e.g. frames copied onto the card by hand
+    img.src = `/photos/${id}.jpg`;
+    g.appendChild(el);
+  }
+  markCurrent();
+}
+
+async function renderFromFrame(id, img) {
+  try {
+    const buf = new Uint8Array(await (await fetch(`/photos/${id}.epd`)).arrayBuffer());
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    c.getContext('2d').putImageData(new ImageData(unpackToRGBA(buf), W, H), 0, 0);
+    img.replaceWith(c);
+  } catch {}
+}
+
+function markCurrent() {
+  document.querySelectorAll('.ph').forEach(e => e.classList.toggle('current', e.dataset.id === current));
+}
+
+$('#gallery').addEventListener('click', async e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const id = b.closest('.ph').dataset.id;
+  try {
+    if (b.dataset.act === 'show') { await api(`/api/show?id=${id}`, { method: 'POST' }); toast('Updating frame (~20 s)'); refreshStatus(); }
+    if (b.dataset.act === 'del' && confirm('Delete this photo from the frame?')) { await api(`/api/delete?id=${id}`, { method: 'POST' }); loadGallery(); }
+  } catch (err) { toast(err.message); }
+});
+
+$('#btnNext').onclick = async () => { try { await api('/api/next', { method: 'POST' }); toast('Showing next photo'); refreshStatus(); } catch (e) { toast(e.message); } };
+$('#btnSleep').onclick = async () => { if (!confirm('Put the frame to sleep? Press KEY on the frame to wake the web UI again.')) return; try { await api('/api/sleep', { method: 'POST' }); toast('Frame is going to sleep'); } catch (e) { toast(e.message); } };
+
+/* ---------- editor ---------- */
+const queue = [];
+let bitmap = null, view = { ox: 0, oy: 0 }, lastIdx = null, rafPending = false;
+const ctl = ['orient', 'fit', 'zoom', 'bright', 'contrast', 'sat', 'strength'];
+const defaults = { fit: 'cover', zoom: 1, bright: 0, contrast: 0, sat: 120, strength: 100 };
+
+function viewSize() { return $('#orient').value === 'land' ? [W, H] : [H, W]; }
+
+function addFiles(files) {
+  for (const f of files) if (f.type.startsWith('image/')) queue.push(f);
+  if (!bitmap) nextInQueue();
+}
+
+async function nextInQueue() {
+  bitmap = null;
+  const f = queue.shift();
+  if (!f) { $('#editor').classList.remove('open'); return; }
+  try {
+    bitmap = await createImageBitmap(f); // applies EXIF orientation in current browsers
+  } catch { toast(`Can't decode ${f.name}`); return nextInQueue(); }
+  $('#queueInfo').textContent = `${f.name}${queue.length ? ` · ${queue.length} more queued` : ''}`;
+  let portraitPref = 'cw';
+  try { portraitPref = localStorage.getItem('portrait') || 'cw'; } catch {}
+  $('#orient').value = bitmap.width >= bitmap.height ? 'land' : portraitPref;
+  resetAdjust();
+  $('#editor').classList.add('open');
+}
+
+function resetAdjust() {
+  for (const [k, v] of Object.entries(defaults)) $('#' + k).value = v;
+  view = { ox: 0, oy: 0 };
+  schedule();
+}
+
+function schedule() {
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => { rafPending = false; render(); });
+}
+
+function render() {
+  if (!bitmap) return;
+  const [vw, vh] = viewSize();
+  const cv = $('#preview');
+  cv.width = vw; cv.height = vh;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, vw, vh);
+  ctx.imageSmoothingQuality = 'high';
+  const cover = $('#fit').value === 'cover';
+  const base = cover ? Math.max(vw / bitmap.width, vh / bitmap.height) : Math.min(vw / bitmap.width, vh / bitmap.height);
+  const s = base * +$('#zoom').value;
+  const dw = bitmap.width * s, dh = bitmap.height * s;
+  // Keep the pan offset inside the image so no blank edges appear when cropping.
+  const maxX = Math.max(0, (dw - vw) / 2), maxY = Math.max(0, (dh - vh) / 2);
+  view.ox = Math.max(-maxX, Math.min(maxX, view.ox));
+  view.oy = Math.max(-maxY, Math.min(maxY, view.oy));
+  ctx.drawImage(bitmap, (vw - dw) / 2 + view.ox, (vh - dh) / 2 + view.oy, dw, dh);
+
+  const img = ctx.getImageData(0, 0, vw, vh);
+  const px = adjust(img.data, vw * vh, { bright: +$('#bright').value, contrast: +$('#contrast').value, sat: +$('#sat').value });
+  lastIdx = dither(px, vw, vh, +$('#strength').value / 100);
+  for (let i = 0; i < vw * vh; i++) img.data.set(PALETTE[lastIdx[i]].rgb, i * 4);
+  ctx.putImageData(img, 0, 0);
+}
+
+ctl.forEach(k => $('#' + k).addEventListener('input', schedule));
+$('#orient').addEventListener('change', () => { const v = $('#orient').value; if (v !== 'land') try { localStorage.setItem('portrait', v); } catch {} });
+$('#btnReset').onclick = resetAdjust;
+$('#btnSkip').onclick = nextInQueue;
+
+// Drag to pan (in canvas pixels, so it feels the same at any on-screen size)
+let drag = null;
+$('#preview').addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; e.target.setPointerCapture(e.pointerId); });
+$('#preview').addEventListener('pointermove', e => {
+  if (!drag) return;
+  const k = $('#preview').width / $('#preview').getBoundingClientRect().width;
+  view.ox += (e.clientX - drag.x) * k; view.oy += (e.clientY - drag.y) * k;
+  drag = { x: e.clientX, y: e.clientY };
+  schedule();
+});
+$('#preview').addEventListener('pointerup', () => drag = null);
+
+$('#btnUpload').onclick = async () => {
+  if (!lastIdx) return;
+  const btn = $('#btnUpload');
+  btn.disabled = true;
+  try {
+    render(); // make sure lastIdx matches the controls exactly
+    const [vw, vh] = viewSize();
+    const id = newId();
+    // Thumbnail = downscaled dithered preview, so the gallery shows what the panel shows.
+    const t = document.createElement('canvas');
+    t.width = vw / 2; t.height = vh / 2;
+    const tc = t.getContext('2d');
+    tc.imageSmoothingQuality = 'high';
+    tc.drawImage($('#preview'), 0, 0, t.width, t.height);
+    const jpg = await new Promise(r => t.toBlob(r, 'image/jpeg', 0.82));
+    await api(`/api/upload?id=${id}&type=jpg`, { method: 'POST', body: jpg });
+    const frame = pack(lastIdx, vw, vh, $('#orient').value);
+    await api(`/api/upload?id=${id}&type=epd${$('#showNow').checked ? '&show=1' : ''}`, { method: 'POST', body: frame });
+    toast($('#showNow').checked ? 'Uploaded, updating frame (~20 s)' : 'Uploaded');
+    loadGallery();
+    refreshStatus();
+    nextInQueue();
+  } catch (e) { toast('Upload failed: ' + e.message); }
+  btn.disabled = false;
+};
+
+const drop = $('#drop');
+drop.onclick = () => $('#file').click();
+$('#file').onchange = e => { addFiles(e.target.files); e.target.value = ''; };
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); addFiles(e.dataTransfer.files); });
+
+/* ---------- settings ---------- */
+const form = $('#settings');
+const touched = new Set();
+form.addEventListener('input', e => touched.add(e.target.name));
+
+async function loadSettings() {
+  const s = await api('/api/settings');
+  for (const k of ['wifi_ssid', 'ap_ssid', 'hostname', 'interval_min', 'awake_min']) form[k].value = s[k];
+  form.shuffle.checked = s.shuffle;
+  form.rotate180.checked = s.rotate180;
+  form.wifi_pass.placeholder = s.wifi_pass_set ? '(unchanged)' : '';
+  form.ap_pass.placeholder = s.ap_pass_set ? '(unchanged)' : '';
+  form.wifi_pass.value = form.ap_pass.value = '';
+  touched.clear();
+}
+
+$('#btnSave').onclick = async () => {
+  if (!form.reportValidity()) return;
+  const body = new URLSearchParams();
+  for (const k of ['wifi_ssid', 'ap_ssid', 'hostname', 'interval_min', 'awake_min']) body.set(k, form[k].value.trim());
+  body.set('shuffle', form.shuffle.checked ? 1 : 0);
+  body.set('rotate180', form.rotate180.checked ? 1 : 0);
+  // Passwords are write-only: send them only when edited, so saving other fields never clears them.
+  for (const k of ['wifi_pass', 'ap_pass']) if (touched.has(k)) body.set(k, form[k].value);
+  try { await api('/api/settings', { method: 'POST', body }); toast('Saved'); loadSettings(); }
+  catch (e) { toast('Save failed: ' + e.message); }
+};
+$('#btnReboot').onclick = async () => { try { await api('/api/reboot', { method: 'POST' }); toast('Rebooting…'); setTimeout(() => location.reload(), 12000); } catch (e) { toast(e.message); } };
+
+refreshStatus();
+loadGallery().catch(e => toast(e.message));
+loadSettings().catch(e => toast(e.message));
+</script>
+</body>
+</html>
