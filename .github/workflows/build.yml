@@ -1,6 +1,10 @@
 # Builds the firmware on every push and pull request. A version tag (v1.2.0) also publishes a release with:
 #   photoframe.bin         app image: install from the frame's Settings > Firmware, or as firmware.bin on the card
 #   halcyonframe-full.bin  bootloader + partitions + app at offset 0: USB / web installer for new or bricked frames
+#
+# People flash these files onto their frames, so the supply chain is locked down: actions are pinned to commit
+# SHAs (Dependabot proposes updates), the build job can only read, and only the tag-triggered release job can
+# write to the repo.
 name: build
 on:
   push:
@@ -9,34 +13,44 @@ on:
   pull_request:
 
 permissions:
-  contents: write # creating releases
+  contents: read
 
 jobs:
   firmware:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # full history so `git describe` gives the firmware its version string
+          persist-credentials: false
       - name: Build
-        uses: espressif/esp-idf-ci-action@v1
+        uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
         with:
           esp_idf_version: v5.5.1
           target: esp32s3
           path: firmware
           # The container runs as another user; without this git refuses to describe the checkout.
           command: git config --global --add safe.directory '*' && idf.py build && cd build && esptool.py --chip esp32s3 merge_bin -o halcyonframe-full.bin @flash_args
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: firmware
           path: |
             firmware/build/photoframe.bin
             firmware/build/halcyonframe-full.bin
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: firmware
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: firmware
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
-            firmware/build/photoframe.bin
-            firmware/build/halcyonframe-full.bin
+            photoframe.bin
+            halcyonframe-full.bin
           generate_release_notes: true
