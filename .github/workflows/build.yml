@@ -1,0 +1,42 @@
+# Builds the firmware on every push and pull request. A version tag (v1.2.0) also publishes a release with:
+#   photoframe.bin         app image: install from the frame's Settings > Firmware, or as firmware.bin on the card
+#   halcyonframe-full.bin  bootloader + partitions + app at offset 0: USB / web installer for new or bricked frames
+name: build
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write # creating releases
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so `git describe` gives the firmware its version string
+      - name: Build
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.1
+          target: esp32s3
+          path: firmware
+          # The container runs as another user; without this git refuses to describe the checkout.
+          command: git config --global --add safe.directory '*' && idf.py build && cd build && esptool.py --chip esp32s3 merge_bin -o halcyonframe-full.bin @flash_args
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: |
+            firmware/build/photoframe.bin
+            firmware/build/halcyonframe-full.bin
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            firmware/build/photoframe.bin
+            firmware/build/halcyonframe-full.bin
+          generate_release_notes: true
