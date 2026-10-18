@@ -46,6 +46,18 @@ input[type=range] { width: 100%; }
 form.settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
 form.settings label { display: grid; gap: 3px; font-size: 13px; color: var(--muted); }
 .hint { font-size: 12px; color: var(--muted); }
+#banners { display: grid; gap: 8px; }
+#banners:empty { display: none; }
+.banner { padding: 10px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); }
+.banner.bad { border-color: var(--danger); color: var(--danger); }
+.banner.warn { border-color: #b8860b; }
+.banner.info { border-color: var(--accent); }
+#fitNote { font-size: 13px; }
+.batch { margin-top: 12px; padding: 12px; border: 1px solid var(--accent); border-radius: 8px; display: grid; gap: 8px; }
+.batch[hidden] { display: none; }
+.batch progress { width: 100%; height: 14px; }
+.ph.other img, .ph.other canvas { opacity: .4; }
+.ph .tag { font-size: 12px; color: var(--muted); padding: 0 6px; }
 #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
 #toast.show { opacity: 1; }
 </style>
@@ -61,9 +73,20 @@ form.settings label { display: grid; gap: 3px; font-size: 13px; color: var(--mut
 </header>
 
 <main>
+  <div id="banners"></div>
   <section>
     <h2>Add photos</h2>
     <div id="drop">Drop images here or click to choose<input id="file" type="file" accept="image/*" multiple hidden></div>
+    <div class="batch" id="batchOffer" hidden>
+      <div id="batchOfferText"></div>
+      <div class="row"><button class="primary" id="btnBatch">Upload all automatically</button><span class="hint">or review them one at a time below</span></div>
+    </div>
+    <div class="batch" id="batchRun" hidden>
+      <progress id="batchProg" value="0" max="1"></progress>
+      <div id="batchStatus"></div>
+      <div class="hint" id="batchHint">Keep this page open and the screen on until it finishes. Photos go straight to the card; the frame's screen doesn't change.</div>
+      <div class="row"><button id="btnBatchStop">Stop</button></div>
+    </div>
     <div id="editor">
       <div>
         <canvas id="preview"></canvas>
@@ -71,15 +94,14 @@ form.settings label { display: grid; gap: 3px; font-size: 13px; color: var(--mut
       </div>
       <div class="ctl">
         <div class="hint" id="queueInfo"></div>
-        <label>Orientation
-          <select id="orient">
-            <option value="land">Landscape</option>
-            <option value="ccw">Portrait (frame turned left)</option>
-            <option value="cw">Portrait (frame turned right)</option>
+        <div class="hint" id="frameInfo"></div>
+        <div id="fitNote"></div>
+        <label>Shape
+          <select id="fit">
+            <option value="cover">Fill the frame (crop)</option>
+            <option value="blur">Whole photo, blurred edges</option>
+            <option value="contain">Whole photo, white edges</option>
           </select>
-        </label>
-        <label>Fit
-          <select id="fit"><option value="cover">Fill (crop)</option><option value="contain">Fit (white borders)</option></select>
         </label>
         <label>Zoom <input id="zoom" type="range" min="1" max="3" step="0.01" value="1"></label>
         <label>Brightness <input id="bright" type="range" min="-60" max="60" value="0"></label>
@@ -104,10 +126,23 @@ form.settings label { display: grid; gap: 3px; font-size: 13px; color: var(--mut
   <section>
     <h2>Settings</h2>
     <form class="settings" id="settings">
-      <label>Wi-Fi network (blank = access point only)<input type="text" name="wifi_ssid" maxlength="32" autocomplete="off"></label>
+      <label>Nearby Wi-Fi networks
+        <span class="row" style="flex-wrap:nowrap">
+          <select id="netPick"><option value="">Looking for networks…</option></select>
+          <button type="button" id="btnScan" title="Search again">Rescan</button>
+        </span>
+      </label>
+      <label>Wi-Fi network (blank = frame's own hotspot only)<input type="text" name="wifi_ssid" maxlength="32" autocomplete="off"></label>
       <label>Wi-Fi password<input type="password" name="wifi_pass" maxlength="64" autocomplete="new-password"></label>
       <label>Access point name<input type="text" name="ap_ssid" maxlength="32" required></label>
       <label>Access point password (8+ chars, blank = open)<input type="password" name="ap_pass" maxlength="64" autocomplete="new-password"></label>
+      <label>How the frame hangs
+        <select name="orientation">
+          <option value="landscape">Landscape (wide)</option>
+          <option value="cw">Portrait, turned right</option>
+          <option value="ccw">Portrait, turned left</option>
+        </select>
+      </label>
       <label>Hostname (http://name.local)<input type="text" name="hostname" maxlength="32" pattern="[A-Za-z0-9\-]+" required></label>
       <label>Change photo every (minutes, 0 = never)<input type="number" name="interval_min" min="0" max="10080"></label>
       <label>Sleep after inactivity (minutes, 0 = never)<input type="number" name="awake_min" min="0" max="1440"></label>
@@ -116,9 +151,9 @@ form.settings label { display: grid; gap: 3px; font-size: 13px; color: var(--mut
     </form>
     <div class="row" style="margin-top:12px">
       <button class="primary" id="btnSave">Save</button>
-      <button id="btnReboot">Reboot (applies Wi-Fi changes)</button>
+      <button id="btnReboot">Restart frame</button>
     </div>
-    <p class="hint">Settings are stored in <code>config.txt</code> on the TF card. Photos live in <code>/photos</code>. Press KEY to wake the web UI; BOOT shows the next photo.</p>
+    <p class="hint">Settings are stored in <code>config.txt</code> on the TF card. Photos live in <code>/photos</code>. Press KEY on the frame to wake it, and KEY again to show this page's address on the frame. BOOT shows the next photo.</p>
   </section>
 </main>
 <div id="toast"></div>
@@ -260,6 +295,23 @@ async function api(path, opts = {}) {
 
 /* ---------- status ---------- */
 let current = '', statusTimer;
+// How the frame hangs (Settings). 'landscape' | 'cw' | 'ccw'; pack() calls landscape 'land'.
+let frameOrient = 'landscape';
+const packOrient = () => frameOrient === 'landscape' ? 'land' : frameOrient;
+const photoOrient = id => id.endsWith('_ccw') ? 'ccw' : id.endsWith('_cw') ? 'cw' : 'land';
+const ORIENT_TEXT = { land: 'landscape', cw: 'portrait (turned right)', ccw: 'portrait (turned left)' };
+const WIFI_ERR = { auth: 'the password seems wrong.', not_found: "the network wasn't found. Is it on and in range?", other: 'the connection failed.' };
+
+function setBanners(list) {
+  const el = $('#banners');
+  el.replaceChildren(...list.map(([kind, text]) => {
+    const d = document.createElement('div');
+    d.className = 'banner ' + kind;
+    d.textContent = text; // textContent: the SSID is user-supplied
+    return d;
+  }));
+}
+let pinnedBanner = null; // e.g. "Joining HomeNet…" survives status refreshes
 async function refreshStatus() {
   clearTimeout(statusTimer);
   let busy = false;
@@ -275,7 +327,21 @@ async function refreshStatus() {
       s.ap_mode ? `Access point ${s.ip}` : s.ip,
     ].filter(Boolean).join('<span>·</span>');
     if (s.current !== current) { current = s.current; markCurrent(); }
-  } catch { $('#status').textContent = 'Frame unreachable (asleep?)'; }
+    if (s.orientation !== frameOrient) { frameOrient = s.orientation; orientationChanged(); }
+    const b = [];
+    if (!s.sd) b.push(['bad', 'No TF card in the frame. Insert a FAT32 card, then press KEY on the frame.']);
+    if (s.ap_mode && s.wifi_ssid && s.wifi_error) b.push(['bad', `The frame couldn't join "${s.wifi_ssid}": ${WIFI_ERR[s.wifi_error]} Fix it under Settings below, then Save & connect.`]);
+    if (s.battery_state === 'critical') b.push(['bad', 'The battery is empty. Plug in the USB-C cable.']);
+    else if (s.battery_state === 'low') b.push(['warn', `Battery low (${s.percent}%). Charge the frame soon.`]);
+    if (s.bad_photos) b.push(['warn', `${s.bad_photos} photo file${s.bad_photos > 1 ? 's' : ''} on the card can't be shown (wrong size). Delete and add them again.`]);
+    if (s.sd && s.photos === 0) b.push(['info', 'Welcome! Add your first photo below. It shows on the frame about 20 seconds after you upload it.']);
+    if (s.ap_mode && !s.wifi_ssid) b.push(['info', "Optional: connect the frame to your home Wi-Fi under Settings, so you don't have to switch networks to add photos."]);
+    if (pinnedBanner) b.unshift(pinnedBanner);
+    setBanners(b);
+  } catch {
+    $('#status').textContent = 'Frame unreachable (asleep?)';
+    if (pinnedBanner) setBanners([pinnedBanner]);
+  }
   statusTimer = setTimeout(refreshStatus, busy ? 3000 : 15000);
 }
 
@@ -290,6 +356,12 @@ async function loadGallery() {
     el.className = 'ph';
     el.dataset.id = id;
     el.innerHTML = `<img loading="lazy" alt=""><div class="row"><button data-act="show">Show</button><button class="danger" data-act="del">Delete</button></div>`;
+    if (photoOrient(id) !== packOrient()) {
+      // Cropped for the other orientation: it would appear sideways, so the slideshow skips it.
+      el.classList.add('other');
+      el.querySelector('[data-act=show]').disabled = true;
+      el.insertAdjacentHTML('beforeend', `<div class="tag">Made for ${ORIENT_TEXT[photoOrient(id)]}; not shown while the frame is ${ORIENT_TEXT[packOrient()]}.</div>`);
+    }
     const img = el.querySelector('img');
     img.onerror = () => renderFromFrame(id, img); // e.g. frames copied onto the card by hand
     img.src = `/photos/${id}.jpg`;
@@ -328,27 +400,57 @@ $('#btnSleep').onclick = async () => { if (!confirm('Put the frame to sleep? Pre
 /* ---------- editor ---------- */
 const queue = [];
 let bitmap = null, view = { ox: 0, oy: 0 }, lastIdx = null, rafPending = false;
-const ctl = ['orient', 'fit', 'zoom', 'bright', 'contrast', 'sat', 'strength'];
+const ctl = ['fit', 'zoom', 'bright', 'contrast', 'sat', 'strength'];
 const defaults = { fit: 'cover', zoom: 1, bright: 0, contrast: 0, sat: 120, strength: 100 };
 
-function viewSize() { return $('#orient').value === 'land' ? [W, H] : [H, W]; }
+function viewSize() { return frameOrient === 'landscape' ? [W, H] : [H, W]; }
+
+// How much of the photo survives "Fill the frame", and where the crop comes from.
+function cropInfo(bmp = bitmap) {
+  const [vw, vh] = viewSize();
+  const ia = bmp.width / bmp.height, fa = vw / vh;
+  return { kept: Math.min(ia, fa) / Math.max(ia, fa), sides: ia > fa };
+}
+
+function updateFitNote() {
+  if (!bitmap) return;
+  $('#frameInfo').textContent = `Frame is ${ORIENT_TEXT[packOrient()]} (change under Settings).`;
+  const { kept, sides } = cropInfo();
+  const fit = $('#fit').value;
+  let note;
+  if (kept > 0.97) note = 'This photo already has the frame\'s shape.';
+  else if (fit === 'cover') note = `Filling the frame crops ${Math.round((1 - kept) * 100)}% of this photo from the ${sides ? 'sides' : 'top and bottom'}. Drag the preview to choose what stays.`;
+  else note = `The whole photo is shown, with ${fit === 'blur' ? 'blurred' : 'white'} edges ${sides ? 'above and below' : 'on the sides'}.`;
+  $('#fitNote').textContent = note;
+}
+
+function orientationChanged() {
+  if (bitmap) { defaults.fit = defaultFit(); $('#fit').value = defaults.fit; view = { ox: 0, oy: 0 }; schedule(); }
+  loadGallery().catch(() => {});
+}
+
+// Crop to fill unless that would throw away much of the photo (e.g. portrait photo, landscape frame).
+function defaultFit(bmp = bitmap) { return cropInfo(bmp).kept < 0.7 ? 'blur' : 'cover'; }
+
+let currentFile = null;
 
 function addFiles(files) {
-  for (const f of files) if (f.type.startsWith('image/')) queue.push(f);
+  for (const f of files) if (f.type.startsWith('image/') || /\.(heic|heif)$/i.test(f.name)) queue.push(f);
   if (!bitmap) nextInQueue();
+  updateBatchOffer();
 }
 
 async function nextInQueue() {
+  bitmap?.close(); // full-size decoded photos are large; free each one instead of waiting for GC
   bitmap = null;
-  const f = queue.shift();
+  const f = currentFile = queue.shift() || null;
+  updateBatchOffer();
   if (!f) { $('#editor').classList.remove('open'); return; }
   try {
     bitmap = await createImageBitmap(f); // applies EXIF orientation in current browsers
   } catch { toast(`Can't decode ${f.name}`); return nextInQueue(); }
   $('#queueInfo').textContent = `${f.name}${queue.length ? ` · ${queue.length} more queued` : ''}`;
-  let portraitPref = 'cw';
-  try { portraitPref = localStorage.getItem('portrait') || 'cw'; } catch {}
-  $('#orient').value = bitmap.width >= bitmap.height ? 'land' : portraitPref;
+  defaults.fit = defaultFit();
   resetAdjust();
   $('#editor').classList.add('open');
 }
@@ -365,34 +467,69 @@ function schedule() {
   requestAnimationFrame(() => { rafPending = false; render(); });
 }
 
-function render() {
-  if (!bitmap) return;
+// Draws bmp into canvas cv at the frame's size, applies the adjustments, dithers, and paints the result in
+// panel colors. Returns the palette indices. Shared by the editor and batch uploads.
+function compose(cv, bmp, o) {
   const [vw, vh] = viewSize();
-  const cv = $('#preview');
   cv.width = vw; cv.height = vh;
   const ctx = cv.getContext('2d', { willReadFrequently: true });
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, vw, vh);
   ctx.imageSmoothingQuality = 'high';
-  const cover = $('#fit').value === 'cover';
-  const base = cover ? Math.max(vw / bitmap.width, vh / bitmap.height) : Math.min(vw / bitmap.width, vh / bitmap.height);
-  const s = base * +$('#zoom').value;
-  const dw = bitmap.width * s, dh = bitmap.height * s;
+  const cover = o.fit === 'cover';
+  if (o.fit === 'blur') {
+    // Soft background: the photo filling the frame, shrunk to a few pixels and scaled back up.
+    const sm = document.createElement('canvas');
+    sm.width = Math.max(1, Math.round(vw / 32)); sm.height = Math.max(1, Math.round(vh / 32));
+    const bs = Math.max(sm.width / bmp.width, sm.height / bmp.height);
+    sm.getContext('2d').drawImage(bmp, (sm.width - bmp.width * bs) / 2, (sm.height - bmp.height * bs) / 2, bmp.width * bs, bmp.height * bs);
+    ctx.drawImage(sm, 0, 0, vw, vh);
+  }
+  const base = cover ? Math.max(vw / bmp.width, vh / bmp.height) : Math.min(vw / bmp.width, vh / bmp.height);
+  const s = base * o.zoom;
+  const dw = bmp.width * s, dh = bmp.height * s;
   // Keep the pan offset inside the image so no blank edges appear when cropping.
-  const maxX = Math.max(0, (dw - vw) / 2), maxY = Math.max(0, (dh - vh) / 2);
-  view.ox = Math.max(-maxX, Math.min(maxX, view.ox));
-  view.oy = Math.max(-maxY, Math.min(maxY, view.oy));
-  ctx.drawImage(bitmap, (vw - dw) / 2 + view.ox, (vh - dh) / 2 + view.oy, dw, dh);
+  const v = o.view, maxX = Math.max(0, (dw - vw) / 2), maxY = Math.max(0, (dh - vh) / 2);
+  v.ox = Math.max(-maxX, Math.min(maxX, v.ox));
+  v.oy = Math.max(-maxY, Math.min(maxY, v.oy));
+  ctx.drawImage(bmp, (vw - dw) / 2 + v.ox, (vh - dh) / 2 + v.oy, dw, dh);
 
   const img = ctx.getImageData(0, 0, vw, vh);
-  const px = adjust(img.data, vw * vh, { bright: +$('#bright').value, contrast: +$('#contrast').value, sat: +$('#sat').value });
-  lastIdx = dither(px, vw, vh, +$('#strength').value / 100);
-  for (let i = 0; i < vw * vh; i++) img.data.set(PALETTE[lastIdx[i]].rgb, i * 4);
+  const idx = dither(adjust(img.data, vw * vh, o), vw, vh, o.strength / 100);
+  for (let i = 0; i < vw * vh; i++) img.data.set(PALETTE[idx[i]].rgb, i * 4);
   ctx.putImageData(img, 0, 0);
+  return idx;
+}
+
+const colorOpts = () => ({ bright: +$('#bright').value, contrast: +$('#contrast').value, sat: +$('#sat').value, strength: +$('#strength').value });
+
+function render() {
+  if (!bitmap) return;
+  lastIdx = compose($('#preview'), bitmap, { ...colorOpts(), fit: $('#fit').value, zoom: +$('#zoom').value, view });
+  updateFitNote();
+}
+
+// Thumbnail (downscaled dithered preview, so the gallery shows what the panel shows) + packed panel frame.
+async function encode(cv, idx) {
+  const t = document.createElement('canvas');
+  t.width = cv.width / 2; t.height = cv.height / 2;
+  const tc = t.getContext('2d');
+  tc.imageSmoothingQuality = 'high';
+  tc.drawImage(cv, 0, 0, t.width, t.height);
+  const jpg = await new Promise(r => t.toBlob(r, 'image/jpeg', 0.82));
+  return { jpg, frame: pack(idx, cv.width, cv.height, packOrient()) };
+}
+
+// The id records the orientation it was cropped for, so the frame only shows it when hung that way.
+// show: 'now'; 'auto' (only replaces a setup/status screen); 'never' (batch: the panel doesn't change).
+async function uploadPhoto({ jpg, frame }, show) {
+  const id = newId() + (packOrient() === 'land' ? '' : '_' + packOrient());
+  await api(`/api/upload?id=${id}&type=jpg`, { method: 'POST', body: jpg });
+  const q = { now: '&show=1', auto: '', never: '&show=0' }[show];
+  await api(`/api/upload?id=${id}&type=epd${q}`, { method: 'POST', body: frame });
 }
 
 ctl.forEach(k => $('#' + k).addEventListener('input', schedule));
-$('#orient').addEventListener('change', () => { const v = $('#orient').value; if (v !== 'land') try { localStorage.setItem('portrait', v); } catch {} });
 $('#btnReset').onclick = resetAdjust;
 $('#btnSkip').onclick = nextInQueue;
 
@@ -414,18 +551,7 @@ $('#btnUpload').onclick = async () => {
   btn.disabled = true;
   try {
     render(); // make sure lastIdx matches the controls exactly
-    const [vw, vh] = viewSize();
-    const id = newId();
-    // Thumbnail = downscaled dithered preview, so the gallery shows what the panel shows.
-    const t = document.createElement('canvas');
-    t.width = vw / 2; t.height = vh / 2;
-    const tc = t.getContext('2d');
-    tc.imageSmoothingQuality = 'high';
-    tc.drawImage($('#preview'), 0, 0, t.width, t.height);
-    const jpg = await new Promise(r => t.toBlob(r, 'image/jpeg', 0.82));
-    await api(`/api/upload?id=${id}&type=jpg`, { method: 'POST', body: jpg });
-    const frame = pack(lastIdx, vw, vh, $('#orient').value);
-    await api(`/api/upload?id=${id}&type=epd${$('#showNow').checked ? '&show=1' : ''}`, { method: 'POST', body: frame });
+    await uploadPhoto(await encode($('#preview'), lastIdx), $('#showNow').checked ? 'now' : 'auto');
     toast($('#showNow').checked ? 'Uploaded, updating frame (~20 s)' : 'Uploaded');
     loadGallery();
     refreshStatus();
@@ -433,6 +559,77 @@ $('#btnUpload').onclick = async () => {
   } catch (e) { toast('Upload failed: ' + e.message); }
   btn.disabled = false;
 };
+
+/* ---------- batch upload ---------- */
+// For hundreds of photos at once: no per-photo editing, each photo gets the default shape for the frame and
+// the current color settings, and goes straight to the card with show=0 so the panel never changes.
+let batchStop = false, batchRunning = false, wakeLock = null;
+
+function updateBatchOffer() {
+  const n = queue.length + (currentFile ? 1 : 0);
+  $('#batchOffer').hidden = batchRunning || n < 2;
+  $('#batchOfferText').textContent = `${n} photos selected. Upload them all automatically: each is fitted to the frame ` +
+    `with the current color settings and saved to the card without changing what the frame shows.`;
+}
+
+async function keepAwake() {
+  try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {} // not supported everywhere
+}
+document.addEventListener('visibilitychange', () => { if (batchRunning && document.visibilityState === 'visible') keepAwake(); });
+window.addEventListener('beforeunload', e => { if (batchRunning) e.preventDefault(); });
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const fmtMin = s => s < 90 ? `${Math.max(1, Math.round(s))} s` : `${Math.round(s / 60)} min`;
+
+async function prepare(file, cv, opts) {
+  const bmp = await createImageBitmap(file);
+  try { return await encode(cv, compose(cv, bmp, { ...opts, fit: defaultFit(bmp), zoom: 1, view: { ox: 0, oy: 0 } })); }
+  finally { bmp.close(); }
+}
+
+$('#btnBatch').onclick = async () => {
+  const files = [currentFile, ...queue.splice(0)].filter(Boolean);
+  const opts = colorOpts();
+  bitmap?.close(); bitmap = null; currentFile = null;
+  $('#editor').classList.remove('open');
+  batchRunning = true; batchStop = false;
+  updateBatchOffer();
+  $('#batchRun').hidden = false;
+  $('#btnBatchStop').hidden = false;
+  $('#batchHint').textContent = "Keep this page open and the screen on until it finishes. Photos go straight to the card; the frame's screen doesn't change.";
+  await keepAwake();
+  const failed = [], t0 = Date.now(), cv = document.createElement('canvas');
+  let done = 0;
+  const show = () => {
+    const left = (Date.now() - t0) / 1000 / Math.max(1, done) * (files.length - done);
+    $('#batchProg').max = files.length; $('#batchProg').value = done;
+    $('#batchStatus').textContent = `${done} of ${files.length} uploaded` + (failed.length ? ` · ${failed.length} failed` : '') +
+      (done < files.length && done ? ` · about ${fmtMin(left)} left` : '');
+  };
+  show();
+  for (const file of files) {
+    if (batchStop) break;
+    let job;
+    try { job = await prepare(file, cv, opts); }
+    catch { failed.push(`${file.name} (can't read this image)`); show(); continue; }
+    // Retry with growing waits: long enough to ride out a Wi-Fi hiccup or the frame restarting.
+    let ok = false;
+    for (const wait of [0, 3000, 10000, 20000]) {
+      if (wait) await sleep(wait);
+      try { await uploadPhoto(job, 'never'); ok = true; break; } catch {}
+    }
+    if (ok) done++; else failed.push(`${file.name} (upload failed)`);
+    show();
+  }
+  batchRunning = false;
+  wakeLock?.release().catch(() => {}); wakeLock = null;
+  $('#batchHint').textContent = (batchStop ? 'Stopped. ' : 'Finished. ') +
+    (failed.length ? `Not uploaded: ${failed.join(', ')}` : 'Everything was uploaded.');
+  $('#btnBatchStop').hidden = true;
+  loadGallery().catch(() => {});
+  refreshStatus();
+};
+$('#btnBatchStop').onclick = () => { batchStop = true; $('#batchStatus').textContent += ' · stopping after this photo…'; };
 
 const drop = $('#drop');
 drop.onclick = () => $('#file').click();
@@ -451,11 +648,57 @@ async function loadSettings() {
   for (const k of ['wifi_ssid', 'ap_ssid', 'hostname', 'interval_min', 'awake_min']) form[k].value = s[k];
   form.shuffle.checked = s.shuffle;
   form.rotate180.checked = s.rotate180;
+  form.orientation.value = s.orientation;
+  if (s.orientation !== frameOrient) { frameOrient = s.orientation; orientationChanged(); }
   form.wifi_pass.placeholder = s.wifi_pass_set ? '(unchanged)' : '';
   form.ap_pass.placeholder = s.ap_pass_set ? '(unchanged)' : '';
   form.wifi_pass.value = form.ap_pass.value = '';
   touched.clear();
+  updateSaveLabel();
 }
+
+/* Nearby networks: picking one fills in the name, so only the password has to be typed. */
+const bars = rssi => rssi > -55 ? '▂▄▆█' : rssi > -67 ? '▂▄▆' : rssi > -78 ? '▂▄' : '▂';
+function showNetworks(networks) {
+  const pick = $('#netPick');
+  const opts = networks.map(n => {
+    const o = document.createElement('option');
+    o.value = n.ssid;
+    o.textContent = `${n.ssid}  ${bars(n.rssi)}${n.secure ? ' 🔒' : ''}`; // textContent: names are untrusted
+    o.dataset.secure = n.secure;
+    return o;
+  });
+  const head = document.createElement('option');
+  head.value = '';
+  head.textContent = networks.length ? 'Choose a network…' : 'No networks found (hidden ones must be typed)';
+  pick.replaceChildren(head, ...opts);
+  pick.value = networks.some(n => n.ssid === form.wifi_ssid.value) ? form.wifi_ssid.value : '';
+}
+async function loadNetworks(rescan) {
+  const btn = $('#btnScan');
+  btn.disabled = true;
+  try { showNetworks((await api(rescan ? '/api/wifi/scan' : '/api/wifi', rescan ? { method: 'POST' } : {})).networks); }
+  catch (e) { toast('Network search failed: ' + e.message); }
+  btn.disabled = false;
+}
+$('#netPick').addEventListener('change', e => {
+  const o = e.target.selectedOptions[0];
+  if (!o.value) return;
+  form.wifi_ssid.value = o.value;
+  touched.add('wifi_ssid');
+  updateSaveLabel();
+  if (o.dataset.secure === 'true') { form.wifi_pass.value = ''; touched.add('wifi_pass'); form.wifi_pass.focus(); }
+});
+$('#btnScan').onclick = () => {
+  // While on the frame's hotspot, the scan makes the frame hop channels for a couple of seconds.
+  toast('Searching… the connection to the frame may pause for a moment');
+  loadNetworks(true);
+};
+
+// Wi-Fi changes only take effect after a restart, so saving them restarts the frame right away.
+const wifiTouched = () => touched.has('wifi_ssid') || touched.has('wifi_pass');
+function updateSaveLabel() { $('#btnSave').textContent = wifiTouched() ? 'Save & connect' : 'Save'; }
+form.addEventListener('input', updateSaveLabel);
 
 $('#btnSave').onclick = async () => {
   if (!form.reportValidity()) return;
@@ -463,16 +706,30 @@ $('#btnSave').onclick = async () => {
   for (const k of ['wifi_ssid', 'ap_ssid', 'hostname', 'interval_min', 'awake_min']) body.set(k, form[k].value.trim());
   body.set('shuffle', form.shuffle.checked ? 1 : 0);
   body.set('rotate180', form.rotate180.checked ? 1 : 0);
+  body.set('orientation', form.orientation.value);
   // Passwords are write-only: send them only when edited, so saving other fields never clears them.
   for (const k of ['wifi_pass', 'ap_pass']) if (touched.has(k)) body.set(k, form[k].value);
-  try { await api('/api/settings', { method: 'POST', body }); toast('Saved'); loadSettings(); }
-  catch (e) { toast('Save failed: ' + e.message); }
+  const connect = wifiTouched(), ssid = form.wifi_ssid.value.trim();
+  try {
+    await api('/api/settings', { method: 'POST', body });
+    if (connect) {
+      await api('/api/reboot', { method: 'POST' });
+      pinnedBanner = ['info', ssid
+        ? `Joining "${ssid}"… Your phone or computer will lose its connection to the frame. In about a minute the frame shows its new address on its screen. If something's wrong, it comes back as "${form.ap_ssid.value}" and tells you why.`
+        : `Restarting with the frame's own Wi-Fi, "${form.ap_ssid.value}". Reconnect to it in about a minute.`];
+      setBanners([pinnedBanner]);
+      window.scrollTo(0, 0);
+      return;
+    }
+    toast('Saved');
+    loadSettings();
+  } catch (e) { toast('Save failed: ' + e.message); }
 };
 $('#btnReboot').onclick = async () => { try { await api('/api/reboot', { method: 'POST' }); toast('Rebooting…'); setTimeout(() => location.reload(), 12000); } catch (e) { toast(e.message); } };
 
 refreshStatus();
 loadGallery().catch(e => toast(e.message));
-loadSettings().catch(e => toast(e.message));
+loadSettings().then(() => loadNetworks(false)).catch(e => toast(e.message));
 </script>
 </body>
 </html>

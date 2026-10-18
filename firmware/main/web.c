@@ -15,6 +15,8 @@
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "esp_timer.h"
 
 static const char *TAG = "web";
 #define IO_BUF 8192
@@ -98,15 +100,21 @@ static esp_err_t h_status(httpd_req_t *req) {
     pmic_status(&p);
     uint64_t total, free_bytes;
     storage_space(&total, &free_bytes);
-    char buf[512];
+    static const char *const WIFI_ERRS[] = {"", "auth", "not_found", "other"};
+    static const char *const BATT[] = {"ok", "low", "critical"};
+    char buf[768];
     snprintf(buf, sizeof(buf),
-             "{\"sd\":%s,\"sd_total\":%llu,\"sd_free\":%llu,\"photos\":%d,\"current\":\"%s\",\"busy\":%s,"
-             "\"battery\":%s,\"battery_mv\":%d,\"percent\":%d,\"charging\":%s,\"usb\":%s,"
-             "\"ap_mode\":%s,\"ip\":\"%s\"}",
-             storage_ok() ? "true" : "false", total, free_bytes, photo_list(NULL, 0), display_current(),
-             display_busy() ? "true" : "false", p.battery ? "true" : "false", p.battery_mv, p.percent,
-             p.charging ? "true" : "false", p.usb ? "true" : "false", wifi_is_ap() ? "true" : "false",
-             wifi_ip());
+             "{\"sd\":%s,\"sd_total\":%llu,\"sd_free\":%llu,\"photos\":%d,\"bad_photos\":%d,\"current\":\"%s\","
+             "\"busy\":%s,\"battery\":%s,\"battery_mv\":%d,\"percent\":%d,\"charging\":%s,\"usb\":%s,"
+             "\"battery_state\":\"%s\",\"ap_mode\":%s,\"ip\":\"%s\",\"wifi_error\":\"%s\","
+             "\"orientation\":\"%s\",\"reset_reason\":%d,\"uptime_s\":%lld,\"wifi_ssid\":",
+             storage_ok() ? "true" : "false", total, free_bytes, photo_list(NULL, 0), photo_bad_count(),
+             display_current(), display_busy() ? "true" : "false", p.battery ? "true" : "false", p.battery_mv,
+             p.percent, p.charging ? "true" : "false", p.usb ? "true" : "false", BATT[pmic_battery_level()],
+             wifi_is_ap() ? "true" : "false", wifi_ip(), WIFI_ERRS[wifi_last_error()],
+             ORIENT_NAMES[g_cfg.orientation], (int) esp_reset_reason(), esp_timer_get_time() / 1000000);
+    json_str(buf, sizeof(buf), g_cfg.wifi_ssid);
+    strlcat(buf, "}", sizeof(buf));
     return send_json(req, buf);
 }
 
@@ -160,7 +168,7 @@ static esp_err_t h_photo_file(httpd_req_t *req) {
     return err;
 }
 
-// POST /api/upload?id=<id>&type=jpg|epd[&show=1]   body: raw file bytes
+// POST /api/upload?id=<id>&type=jpg|epd[&show=1|0]   body: raw file bytes
 // The browser sends the thumbnail first, then the frame; a photo only appears once its .epd exists.
 static esp_err_t h_upload(httpd_req_t *req) {
     REQUIRE_CSRF(req);
@@ -212,7 +220,10 @@ static esp_err_t h_upload(httpd_req_t *req) {
         return send_err(req, "500 Internal Server Error", "write failed (card full?)");
     }
     ESP_LOGI(TAG, "stored %s.%s", id, type);
-    if (epd && show[0] == '1') display_request(id);
+    // show=1: show now. No show param: a first photo still replaces a setup screen, since nobody wants the
+    // instructions to stay up once they've been followed. show=0 (batch uploads): never touch the panel.
+    bool on_status_screen = display_shown_screen() != SCR_NONE && photo_orient(id) == g_cfg.orientation;
+    if (epd && (show[0] == '1' || (!show[0] && on_status_screen))) display_request(id);
     return send_ok(req);
 }
 
@@ -221,7 +232,10 @@ static esp_err_t h_delete(httpd_req_t *req) {
     app_touch();
     char id[PHOTO_ID_MAX];
     if (!query_id(req, id)) return send_err(req, "400 Bad Request", "bad id");
-    return photo_delete(id) ? send_ok(req) : send_err(req, "404 Not Found", "not found");
+    if (!photo_delete(id)) return send_err(req, "404 Not Found", "not found");
+    int bad;
+    photo_scan(g_cfg.orientation, &bad); // refresh the broken-photo count the UI shows
+    return send_ok(req);
 }
 
 static esp_err_t h_show(httpd_req_t *req) {
@@ -252,9 +266,10 @@ static esp_err_t h_settings_get(httpd_req_t *req) {
     size_t o = strlen(buf);
     snprintf(buf + o, sizeof(buf) - o,
              ",\"wifi_pass_set\":%s,\"ap_pass_set\":%s,\"interval_min\":%d,\"awake_min\":%d,"
-             "\"shuffle\":%s,\"rotate180\":%s}",
+             "\"shuffle\":%s,\"rotate180\":%s,\"orientation\":\"%s\"}",
              g_cfg.wifi_pass[0] ? "true" : "false", g_cfg.ap_pass[0] ? "true" : "false", g_cfg.interval_min,
-             g_cfg.awake_min, g_cfg.shuffle ? "true" : "false", g_cfg.rotate180 ? "true" : "false");
+             g_cfg.awake_min, g_cfg.shuffle ? "true" : "false", g_cfg.rotate180 ? "true" : "false",
+             ORIENT_NAMES[g_cfg.orientation]);
     return send_json(req, buf);
 }
 
@@ -287,11 +302,51 @@ static esp_err_t h_settings_post(httpd_req_t *req) {
     if (httpd_query_key_value(body, #name, v, sizeof(v)) == ESP_OK) c.name = atoi(v) < 0 ? 0 : atoi(v);
     STR_FIELD(wifi_ssid) STR_FIELD(wifi_pass) STR_FIELD(ap_ssid) STR_FIELD(ap_pass) STR_FIELD(hostname)
     INT_FIELD(interval_min) INT_FIELD(awake_min) INT_FIELD(shuffle) INT_FIELD(rotate180)
+    if (httpd_query_key_value(body, "orientation", v, sizeof(v)) == ESP_OK) {
+        int o = -1;
+        for (int i = 0; i < 3; i++)
+            if (!strcmp(v, ORIENT_NAMES[i])) o = i;
+        if (o < 0) return send_err(req, "400 Bad Request", "orientation invalid");
+        c.orientation = (orient_t) o;
+    }
     if (!c.ap_ssid[0] || !c.hostname[0]) return send_err(req, "400 Bad Request", "AP name and hostname required");
     if (!wifi_pass_valid(c.wifi_pass)) return send_err(req, "400 Bad Request", "Wi-Fi password must be 8-63 chars");
     if (!wifi_pass_valid(c.ap_pass)) return send_err(req, "400 Bad Request", "AP password must be 8-63 chars");
+    bool turned = c.orientation != g_cfg.orientation;
     g_cfg = c;
-    return config_save() ? send_ok(req) : send_err(req, "500 Internal Server Error", "could not save config.txt");
+    if (!config_save()) return send_err(req, "500 Internal Server Error", "could not save config.txt");
+    // Frame turned: switch to a photo cropped for the new orientation (or the matching status screen).
+    if (turned) display_request(NULL);
+    return send_ok(req);
+}
+
+// GET /api/wifi: nearby networks for the settings page. POST /api/wifi/scan refreshes the list first
+// (POST because a scan briefly interrupts hotspot clients, so other pages shouldn't be able to trigger it).
+static esp_err_t send_networks(httpd_req_t *req) {
+    const wifi_net_t *nets;
+    int n = wifi_networks(&nets);
+    char buf[WIFI_SCAN_MAX * 100 + 32] = "{\"networks\":[";
+    for (int i = 0; i < n; i++) {
+        size_t o = strlen(buf);
+        snprintf(buf + o, sizeof(buf) - o, "%s{\"ssid\":", i ? "," : "");
+        json_str(buf, sizeof(buf), nets[i].ssid);
+        o = strlen(buf);
+        snprintf(buf + o, sizeof(buf) - o, ",\"rssi\":%d,\"secure\":%s}", nets[i].rssi, nets[i].secure ? "true" : "false");
+    }
+    strlcat(buf, "]}", sizeof(buf));
+    return send_json(req, buf);
+}
+
+static esp_err_t h_wifi_get(httpd_req_t *req) {
+    app_touch();
+    return send_networks(req);
+}
+
+static esp_err_t h_wifi_scan(httpd_req_t *req) {
+    REQUIRE_CSRF(req);
+    app_touch();
+    wifi_scan();
+    return send_networks(req);
 }
 
 static esp_err_t h_sleep(httpd_req_t *req) {
@@ -328,6 +383,8 @@ void web_start(void) {
         {.uri = "/api/next", .method = HTTP_POST, .handler = h_next},
         {.uri = "/api/settings", .method = HTTP_GET, .handler = h_settings_get},
         {.uri = "/api/settings", .method = HTTP_POST, .handler = h_settings_post},
+        {.uri = "/api/wifi", .method = HTTP_GET, .handler = h_wifi_get},
+        {.uri = "/api/wifi/scan", .method = HTTP_POST, .handler = h_wifi_scan},
         {.uri = "/api/sleep", .method = HTTP_POST, .handler = h_sleep},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = h_reboot},
     };

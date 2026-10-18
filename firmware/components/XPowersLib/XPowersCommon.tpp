@@ -315,7 +315,9 @@ public:
                     1,
                     buf,
                     length,
-                    -1)) {
+                    // PhotoFrame patch: upstream passes -1 (wait forever); one wedged transaction then hangs
+                    // every task that touches the PMIC, including the web server. The new driver takes ms.
+                    1000 /* ms */)) {
             return 0;
         }
 #else //ESP_IDF_VERSION
@@ -360,7 +362,7 @@ public:
                     __i2c_device,
                     write_buffer,
                     length + 1,
-                    -1)) {
+                    1000 /* ms */)) { // PhotoFrame patch: was -1 (see above)
             free(write_buffer);
             return -1;
         }

@@ -3,6 +3,9 @@
 #include "board.h"
 #include "XPowersLib.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "pmic";
 static XPowersPMU pmu;
@@ -18,6 +21,14 @@ extern "C" void pmic_init(void) {
     bus_cfg.flags.enable_internal_pullup = true;
     i2c_master_bus_handle_t bus;
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_cfg, &bus));
+
+    // Which of the board's I2C chips answer (addresses from the Waveshare schematic). Diagnostic only:
+    // helps tell a bus problem from a single misbehaving chip.
+    const struct { uint8_t addr; const char *name; } chips[] = {
+        {0x18, "ES8311"}, {0x34, "AXP2101"}, {0x40, "ES7210"}, {0x51, "PCF85063"}, {0x70, "SHTC3"}};
+    for (auto &chip : chips)
+        ESP_LOGI(TAG, "i2c 0x%02x %-8s %s", chip.addr, chip.name,
+                 i2c_master_probe(bus, chip.addr, 50) == ESP_OK ? "ok" : "no answer");
 
     pmu_ok = pmu.begin(bus, AXP2101_SLAVE_ADDRESS);
     if (!pmu_ok) {
@@ -39,17 +50,46 @@ extern "C" void pmic_init(void) {
     pmu.enableBattDetection();
     pmu.enableBattVoltageMeasure();
     pmu.enableVbusVoltageMeasure();
+
+    pmic_status_t st;
+    pmic_status(&st);
+    ESP_LOGI(TAG, "battery %s %d mV %d%%, usb %d, charging %d", st.battery ? "yes" : "no", st.battery_mv,
+             st.percent, st.usb, st.charging);
 }
 
+// The web server (status polls) and the display task (battery check per photo) both ask for this.
+// XPowersLib isn't thread-safe, so reads are serialized, and cached briefly to keep I2C traffic down.
+#define STATUS_CACHE_US (5 * 1000 * 1000)
+
 extern "C" void pmic_status(pmic_status_t *out) {
-    *out = {};
-    out->percent = -1;
-    if (!pmu_ok) return;
-    out->usb = pmu.isVbusIn();
-    out->battery = pmu.isBatteryConnect();
-    out->charging = pmu.isCharging();
-    if (out->battery) {
-        out->battery_mv = pmu.getBattVoltage();
-        out->percent = pmu.getBatteryPercent();
+    static SemaphoreHandle_t lock = xSemaphoreCreateMutex(); // C++ function-static: created once, thread-safe
+    static pmic_status_t cache;
+    static int64_t cached_at;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    if (!cached_at || esp_timer_get_time() - cached_at > STATUS_CACHE_US) {
+        cache = {};
+        cache.percent = -1;
+        if (pmu_ok) {
+            cache.usb = pmu.isVbusIn();
+            cache.battery = pmu.isBatteryConnect();
+            cache.charging = pmu.isCharging();
+            if (cache.battery) {
+                cache.battery_mv = pmu.getBattVoltage();
+                cache.percent = pmu.getBatteryPercent();
+            }
+        }
+        cached_at = esp_timer_get_time();
     }
+    *out = cache;
+    xSemaphoreGive(lock);
+}
+
+extern "C" batt_level_t pmic_battery_level(void) {
+    pmic_status_t p;
+    pmic_status(&p);
+    if (!p.battery || p.usb || p.charging || p.percent < 0) return BATT_OK;
+    // The gauge percentage is uncalibrated on this board; the voltage floor is a backstop in case it reads
+    // high near empty. 3.45 V under light load is close to empty for a Li-ion cell.
+    if (p.percent <= 2 || (p.battery_mv > 0 && p.battery_mv < 3450)) return BATT_CRITICAL;
+    return p.percent <= 15 ? BATT_LOW : BATT_OK;
 }
