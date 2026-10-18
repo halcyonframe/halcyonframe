@@ -409,7 +409,7 @@ static esp_err_t h_time(httpd_req_t *req) {
     return send_ok(req);
 }
 
-// POST /api/ota   body: the app image (build/photoframe.bin). Restarts into it on success.
+// POST /api/ota   body: the app image (build/halcyonframe.bin). Restarts into it on success.
 typedef struct {
     httpd_req_t *req;
     size_t left;

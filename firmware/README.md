@@ -1,4 +1,6 @@
-# PhotoFrame firmware for the Waveshare ESP32-S3-PhotoPainter
+# Halcyon Frame firmware
+
+Firmware for the Waveshare ESP32-S3-PhotoPainter (7.3" Spectra 6 e-paper). Not affiliated with Waveshare.
 
 A fully local replacement for the vendor firmware. The frame runs its own web UI, keeps settings and photos on the TF card, and makes no cloud calls. There is no AI image generation, voice, or weather.
 
@@ -53,9 +55,9 @@ The frame never sits blank or stuck on an old image. When something needs a pers
 
 | Situation | Screen |
 |---|---|
-| No photos yet, on its own hotspot | "Hi! Let's add photos": join *PhotoFrame* (QR), then open 192.168.4.1 (QR) |
+| No photos yet, on its own hotspot | "Hi! Let's add photos": join the frame's hotspot, e.g. *Halcyon-C121* (QR), then open 192.168.4.1 (QR) |
 | Home Wi-Fi set but joining failed | "Wi-Fi problem": the reason (wrong password / network not found), plus how to reach the hotspot to fix it |
-| No photos yet, on home Wi-Fi | "Ready for photos!": `photoframe.local`, the IP address and a QR code |
+| No photos yet, on home Wi-Fi | "Ready for photos!": `halcyon-xxxx.local`, the IP address and a QR code |
 | After any reset (power-on, restart, crash) | For the first minute, "How to reach me": network, `http://` address with QR code, battery, photos on the card, free space. Then the photo returns. |
 | TF card missing or unreadable | What to do about it |
 | Battery at 2% or less | "Please charge me". It's drawn while there's still power, so it stays up after the battery dies. At 15% or less, photos get a small "Charge me" corner badge instead. |
@@ -98,8 +100,8 @@ Use a FAT32 card. The firmware never formats the card, and it ignores the vendor
 | key | default | meaning |
 |---|---|---|
 | `wifi_ssid` / `wifi_pass` | empty | Network to join. Empty, or failing to connect within 20 s, falls back to the access point. |
-| `ap_ssid` / `ap_pass` | `PhotoFrame` / `photoframe` | Fallback access point (8-63 char password, or empty for an open network). UI at http://192.168.4.1. An invalid password in a hand-edited file starts an open AP so you can fix it. |
-| `hostname` | `photoframe` | DHCP and mDNS name: http://photoframe.local |
+| `ap_ssid` / `ap_pass` | `Halcyon-XXXX` / random | Created on first boot: XXXX is from the frame's MAC; the password is printed on the setup screen. |
+| `hostname` | `halcyon-xxxx` | DHCP and mDNS name: http://halcyon-xxxx.local |
 | `interval_min` | `60` | Slideshow interval; `0` = only change on request |
 | `awake_min` | `10` | Idle minutes before deep sleep when the UI is up; `0` = never sleep |
 | `shuffle` | `0` | Random order instead of upload order |
@@ -140,8 +142,8 @@ To get back to the vendor firmware, flash `03 Firmware/ESP32-S3-PhotoPainter-fac
 
 After the first USB flash, there's no need for a cable:
 
-- **Web:** Settings → Firmware → choose `build/photoframe.bin` → Install. It takes about 30 s, then the frame restarts.
-- **TF card:** copy `photoframe.bin` to the card root as `firmware.bin` and restart the frame (or power it on). It's renamed to `firmware.done`, or `firmware.failed` if it wasn't valid.
+- **Web:** Settings → Firmware → choose `halcyonframe.bin` from a [release](https://github.com/halcyonframe/halcyonframe/releases) → Install. It takes about 30 s, then the frame restarts.
+- **TF card:** copy `halcyonframe.bin` to the card root as `firmware.bin` and restart the frame (or power it on). It's renamed to `firmware.done`, or `firmware.failed` if it wasn't valid.
 
 While installing, the panel shows **"Updating firmware"** with the installed and incoming versions. After the
 restart, the start screen shows the firmware version and whether the update worked, or that it rolled back.

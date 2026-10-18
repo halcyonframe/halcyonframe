@@ -32,8 +32,8 @@ int main(int argc, char **argv) {
     const char *names[] = {"", "setup", "wifi_fail", "ready", "info", "card", "battery", "status", "update"};
     const char *onames[] = {"land", "cw", "ccw"};
     screen_info_t info = {
-        .ap_ssid = "PhotoFrame", .ap_pass = "photoframe", .wifi_ssid = "HomeNet", .wifi_err = WIFI_ERR_AUTH,
-        .ip = "192.168.4.1", .hostname = "photoframe", .card = CARD_MISSING, .has_battery = true,
+        .ap_ssid = "Halcyon-C121", .ap_pass = "k7mq2xr9tb", .wifi_ssid = "HomeNet", .wifi_err = WIFI_ERR_AUTH,
+        .ip = "192.168.4.1", .hostname = "halcyon-c121", .card = CARD_MISSING, .has_battery = true,
         .battery_pct = 64, .charging = true, .photos = 660, .interval_min = 60, .free_gb = 14.6f,
         .now = 1792353900 /* a Sunday evening in Oct 2026 */, .clock_ok = true, .has_climate = true, .fahrenheit = true,
         .temp_c = 22.4f, .rh = 41, .rssi = -61, .typeface = 0, .cards = {0, 1, 2, 4},
@@ -57,7 +57,7 @@ int main(int argc, char **argv) {
         }
     // Worst case: longest allowed names must still fit (QR codes shrink to make room).
     info.wifi_ssid = "The-Longest-Network-Name-Ever-32";
-    info.ap_ssid = "PhotoFrame-Living-Room-Upstairs";
+    info.ap_ssid = "Halcyon-Living-Room-Upstairs-01";
     info.ap_pass = "a-very-long-hotspot-password-1234";
     for (int o = 0; o < 3; o++)
         for (int s = SCR_SETUP; s <= SCR_INFO; s++) {

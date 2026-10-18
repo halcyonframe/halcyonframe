@@ -13,6 +13,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "bootloader_random.h"
 #include "esp_random.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
@@ -89,13 +90,22 @@ void storage_space(uint64_t *total, uint64_t *free_bytes) {
 
 // Per-frame hotspot password. It's shown on the setup screen with a join QR code, so being random costs
 // the user nothing. No look-alike characters (0/o, 1/l/i), in case it's typed.
+// Runs before Wi-Fi starts, when the hardware RNG has no RF noise to draw on; the SAR ADC entropy source is
+// switched on just for this (ESP-IDF's documented approach for early-boot random numbers).
 static void random_ap_pass(char *out) {
     static const char set[] = "abcdefghjkmnpqrstuvwxyz23456789";
-    for (int i = 0; i < 10; i++) out[i] = set[esp_random() % (sizeof(set) - 1)];
+    const unsigned n = sizeof(set) - 1, limit = 256 - 256 % n; // reject bytes >= limit: no modulo bias
+    bootloader_random_enable();
+    for (int i = 0; i < 10;) {
+        uint8_t b;
+        esp_fill_random(&b, 1);
+        if (b < limit) out[i++] = set[b % n];
+    }
+    bootloader_random_disable();
     out[10] = 0;
 }
 
-// Last two bytes of the hotspot MAC, so several frames in one home get distinct names ("PhotoFrame-C121").
+// Last two bytes of the hotspot MAC, so several frames in one home get distinct names ("Halcyon-C121").
 static void unique_name(char *out, size_t n, const char *base, bool upper) {
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
@@ -104,9 +114,9 @@ static void unique_name(char *out, size_t n, const char *base, bool upper) {
 
 static void config_defaults(void) {
     memset(&g_cfg, 0, sizeof(g_cfg));
-    unique_name(g_cfg.ap_ssid, sizeof(g_cfg.ap_ssid), "PhotoFrame", true);
+    unique_name(g_cfg.ap_ssid, sizeof(g_cfg.ap_ssid), "Halcyon", true);
     random_ap_pass(g_cfg.ap_pass);
-    unique_name(g_cfg.hostname, sizeof(g_cfg.hostname), "photoframe", false);
+    unique_name(g_cfg.hostname, sizeof(g_cfg.hostname), "halcyon", false);
     g_cfg.interval_min = 60;
     g_cfg.awake_min = 10;
     g_cfg.shuffle = false;
@@ -160,7 +170,7 @@ void config_load(void) {
     bool upgraded = false;
     if (!strcmp(g_cfg.ap_pass, OLD_SHARED_AP_PASS)) random_ap_pass(g_cfg.ap_pass), upgraded = true;
     if (!strcmp(g_cfg.ap_ssid, "PhotoFrame"))
-        unique_name(g_cfg.ap_ssid, sizeof(g_cfg.ap_ssid), "PhotoFrame", true), upgraded = true;
+        unique_name(g_cfg.ap_ssid, sizeof(g_cfg.ap_ssid), "Halcyon", true), upgraded = true;
     if (upgraded) {
         ESP_LOGW(TAG, "hotspot is now \"%s\" with a per-frame password", g_cfg.ap_ssid);
         config_save();
@@ -180,7 +190,7 @@ bool config_save(void) {
         return false;
     }
     fprintf(f,
-            "# PhotoFrame settings. Edit here or in the web UI.\n"
+            "# Halcyon Frame settings. Edit here or in the web UI.\n"
             "wifi_ssid=%s\nwifi_pass=%s\nap_ssid=%s\nap_pass=%s\nhostname=%s\n"
             "interval_min=%d\nawake_min=%d\nshuffle=%d\nrotate180=%d\n"
             "# landscape, cw (frame turned right) or ccw (frame turned left)\norientation=%s\n"

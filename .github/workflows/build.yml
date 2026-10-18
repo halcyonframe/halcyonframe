@@ -1,5 +1,5 @@
 # Builds the firmware on every push and pull request. A version tag (v1.2.0) also publishes a release with:
-#   photoframe.bin         app image: install from the frame's Settings > Firmware, or as firmware.bin on the card
+#   halcyonframe.bin       app image: install from the frame's Settings > Firmware, or as firmware.bin on the card
 #   halcyonframe-full.bin  bootloader + partitions + app at offset 0: USB / web installer for new or bricked frames
 #
 # People flash these files onto their frames, so the supply chain is locked down: actions are pinned to commit
@@ -38,7 +38,7 @@ jobs:
         with:
           name: firmware
           path: |
-            firmware/build/photoframe.bin
+            firmware/build/halcyonframe.bin
             firmware/build/halcyonframe-full.bin
 
   release:
@@ -54,6 +54,6 @@ jobs:
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
-            photoframe.bin
+            halcyonframe.bin
             halcyonframe-full.bin
           generate_release_notes: true

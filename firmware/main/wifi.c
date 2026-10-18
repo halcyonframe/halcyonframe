@@ -161,7 +161,7 @@ void wifi_start(void) {
     // http://<hostname>.local
     if (mdns_init() == ESP_OK) {
         mdns_hostname_set(g_cfg.hostname);
-        mdns_instance_name_set("PhotoFrame");
+        mdns_instance_name_set("Halcyon Frame");
         mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
     }
 }
