@@ -6,6 +6,7 @@
 #include <string.h>
 #include "cJSON.h"
 #include "esp_http_client.h"
+#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/time.h>
@@ -149,28 +150,29 @@ static void geo_task(void *arg) {
     cJSON *j = cJSON_Parse(body);
     const cJSON *zone = cJSON_GetObjectItemCaseSensitive(j, "timezone"), *lat = cJSON_GetObjectItemCaseSensitive(j, "lat"),
                 *lon = cJSON_GetObjectItemCaseSensitive(j, "lon");
-    if (cJSON_IsString(zone) && cJSON_IsNumber(lat) && cJSON_IsNumber(lon)) {
-        const char *posix = tzdb_posix(zone->valuestring);
+    // The lookup is plain HTTP, so treat the answer as untrusted: only a zone name from our own table is
+    // accepted (that also rules out line breaks that could inject lines into config.txt), and the
+    // coordinates are re-formatted as numbers.
+    const char *posix = cJSON_IsString(zone) ? tzdb_posix(zone->valuestring) : NULL;
+    if (posix && cJSON_IsNumber(lat) && cJSON_IsNumber(lon) && fabs(lat->valuedouble) <= 90 && fabs(lon->valuedouble) <= 180) {
         char la[16], lo[16];
         snprintf(la, sizeof(la), "%.2f", lat->valuedouble); // ~1 km: city level is all the sun cards need
         snprintf(lo, sizeof(lo), "%.2f", lon->valuedouble);
         bool changed = strcmp(g_cfg.geo_zone, zone->valuestring) || strcmp(g_cfg.geo_lat, la) || strcmp(g_cfg.geo_lon, lo) ||
-                       (posix && strcmp(g_cfg.tz, posix));
+                       strcmp(g_cfg.tz, posix);
         if (changed) {
             snprintf(g_cfg.geo_zone, sizeof(g_cfg.geo_zone), "%s", zone->valuestring);
             snprintf(g_cfg.geo_lat, sizeof(g_cfg.geo_lat), "%s", la);
             snprintf(g_cfg.geo_lon, sizeof(g_cfg.geo_lon), "%s", lo);
-            if (posix) {
-                snprintf(g_cfg.tz, sizeof(g_cfg.tz), "%s", posix);
-                setenv("TZ", g_cfg.tz, 1);
-                tzset();
-            }
+            snprintf(g_cfg.tz, sizeof(g_cfg.tz), "%s", posix);
+            setenv("TZ", g_cfg.tz, 1);
+            tzset();
             config_save(); // only on change: the card shouldn't be rewritten every wake
             app_schedule_changed();
         }
-        ESP_LOGI(TAG, "auto setup: zone %s%s", zone->valuestring, posix ? "" : " (unknown to tzdb, kept old)");
+        ESP_LOGI(TAG, "auto setup: zone %s", zone->valuestring);
     } else {
-        ESP_LOGW(TAG, "auto setup lookup failed");
+        ESP_LOGW(TAG, "auto setup lookup failed or returned an unknown zone");
     }
     cJSON_Delete(j);
     vTaskDelete(NULL);
