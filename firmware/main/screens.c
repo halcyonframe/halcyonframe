@@ -300,12 +300,12 @@ bool screen_render(screen_t s, const screen_info_t *in, uint8_t *buf) {
         d.footer = footer_wake;
         break;
     case SCR_UPDATE:
-        snprintf(t1, sizeof(t1), "Installed: %s", in->fw_version ? in->fw_version : "?");
-        snprintf(t2, sizeof(t2), "Installing: %s", in->fw_incoming && in->fw_incoming[0] ? in->fw_incoming : "new firmware");
+        snprintf(t1, sizeof(t1), "Current version: %s", in->fw_version ? in->fw_version : "?");
+        snprintf(t2, sizeof(t2), "New version: %s", in->fw_incoming && in->fw_incoming[0] ? in->fw_incoming : "new firmware");
         d = (doc_t) {
             .title = "Updating firmware",
             .intro = {{t1, ST_BODY}, {t2, ST_BIG}},
-            .steps = {{0, VIS_NONE, NULL, 0, {{"The frame restarts by itself when it's done, in about a minute.", ST_BODY},
+            .steps = {{0, VIS_NONE, NULL, 0, {{"The new version is installed. The frame restarts by itself in about a minute.", ST_BODY},
                                              {"Please don't unplug it.", ST_RED}}}},
             .footer = "Your photos and settings stay as they are.",
         };

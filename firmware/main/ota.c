@@ -76,7 +76,6 @@ esp_err_t ota_install(ota_read_fn read, void *ctx) {
                 err = ESP_ERR_INVALID_VERSION;
                 break;
             }
-            if (start_hook) start_hook();
         }
         // The first write also rejects anything that isn't an ESP32 app image.
         err = n < 0 ? ESP_FAIL : esp_ota_write(h, buf, n);
@@ -94,8 +93,12 @@ esp_err_t ota_install(ota_read_fn read, void *ctx) {
     if (err != ESP_OK) incoming[0] = 0;
     free(buf);
     atomic_store(&busy, false);
-    if (err == ESP_OK) ESP_LOGI(TAG, "installed %u bytes into %s", (unsigned) total, slot->label);
-    else ESP_LOGE(TAG, "update failed after %u bytes: %s", (unsigned) total, esp_err_to_name(err));
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "installed %u bytes into %s", (unsigned) total, slot->label);
+        // Drawn only now, not when the upload starts: a panel refresh on top of full-rate Wi-Fi traffic reset the
+        // chip mid-upload on USB power, and a rejected upload would have left "Updating" on the panel.
+        if (start_hook) start_hook();
+    } else ESP_LOGE(TAG, "update failed after %u bytes: %s", (unsigned) total, esp_err_to_name(err));
     return err;
 }
 

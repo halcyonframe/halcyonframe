@@ -19,8 +19,8 @@ bool ota_busy(void);
 const char *ota_version(void);
 const char *ota_slot(void); // running app partition, e.g. "ota_0"
 const char *ota_incoming_version(void); // version being installed right now ("" when none)
-// Called once an upload has been recognised as firmware, before anything is written: time to show the
-// "Updating firmware" screen.
+// Called once the new firmware is fully received, verified and set to boot next (not while it uploads, when a
+// panel refresh would compete with Wi-Fi for power): time to show the "Updating firmware" screen.
 void ota_set_start_hook(void (*hook)(void));
 // After a restart: what happened to the last update. 0 = there was none, 1 = now running it, 2 = it didn't
 // start and the bootloader went back to the previous firmware. msg describes it ("" for 0).

@@ -62,7 +62,7 @@ void app_schedule_changed(void) { reschedule = true; }
 time_t app_next_photo(void) { return sched.next_photo; }
 bool app_boot_screen(void) { return boot_info_pending; }
 
-// An update has been recognised: put "Updating firmware" up before the install and restart. During boot (a
+// The new firmware is installed: put "Updating firmware" up before the restart. During boot (a
 // firmware.bin on the card) the display task isn't running yet, so draw directly.
 static bool display_task_up;
 static void update_started(void) {
@@ -331,7 +331,7 @@ void app_main(void) {
         bool installed = ota_from_card();
         gpio_set_level(PIN_LED_GREEN, 1);
         if (installed) {
-            vTaskDelay(pdMS_TO_TICKS(UPDATE_READ_MS)); // the update screen (drawn before installing) stays readable
+            vTaskDelay(pdMS_TO_TICKS(UPDATE_READ_MS)); // the update screen (drawn once the image is installed) stays readable
             esp_restart();
         }
     }
