@@ -13,3 +13,5 @@ bool clock_climate(float *temp_c, float *rh);
 // auto_setup on: NTP (pool.ntp.org unless ntp_server is set) plus a one-off IP lookup that sets the time zone
 // and a city-level location. Call once Wi-Fi is connected (not on the frame's own hotspot).
 void clock_auto_setup(void);
+// Hush just went on: stop the running time sync (a lookup in flight discards its answer).
+void clock_go_offline(void);

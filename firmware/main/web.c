@@ -375,7 +375,11 @@ static esp_err_t settings_post(httpd_req_t *req) {
     if (!wifi_pass_valid(c.ap_pass)) return send_err(req, "400 Bad Request", "AP password must be 8-63 chars");
     bool turned = c.orientation != g_cfg.orientation;
     bool tz_changed = strcmp(c.tz, g_cfg.tz) != 0;
+    bool was_online = online_allowed();
     g_cfg = c;
+    // Apply the privacy switch now, not at the next boot.
+    if (was_online && !online_allowed()) clock_go_offline();
+    else if (!was_online && online_allowed() && !wifi_is_ap()) clock_auto_setup();
     if (tz_changed) {
         setenv("TZ", g_cfg.tz[0] ? g_cfg.tz : "UTC0", 1);
         tzset();

@@ -97,11 +97,24 @@ static void ntp_synced(struct timeval *tv) {
     app_schedule_changed(); // the clock may have jumped
 }
 
+static bool ntp_running;
+
 void clock_start_ntp(const char *server) {
-    if (!server[0] || !online_allowed()) return;
+    if (!server[0] || !online_allowed() || ntp_running) return;
     esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG(server);
     cfg.sync_cb = ntp_synced;
-    if (esp_netif_sntp_init(&cfg) == ESP_OK) ESP_LOGI(TAG, "NTP from %s", server);
+    if (esp_netif_sntp_init(&cfg) == ESP_OK) {
+        ntp_running = true;
+        ESP_LOGI(TAG, "NTP from %s", server);
+    }
+}
+
+void clock_go_offline(void) {
+    if (ntp_running) {
+        esp_netif_sntp_deinit();
+        ntp_running = false;
+        ESP_LOGI(TAG, "NTP stopped (Hush)");
+    }
 }
 
 static bool sht_cmd(uint16_t cmd) {
@@ -141,8 +154,11 @@ bool clock_climate(float *temp_c, float *rh) {
 // city-level coordinates for the network's public IP. Runs once per wake on home Wi-Fi, off the main path.
 #define GEO_URL "http://ip-api.com/json/?fields=status,timezone,lat,lon"
 
+static volatile bool geo_busy; // one lookup at a time, however often the settings are saved
+
 static void geo_task(void *arg) {
     char body[256] = "";
+    if (!online_allowed()) goto done; // Hush was switched on between scheduling and running
     esp_http_client_config_t hc = {.url = GEO_URL, .timeout_ms = 6000};
     esp_http_client_handle_t h = esp_http_client_init(&hc);
     int n = 0;
@@ -163,6 +179,11 @@ static void geo_task(void *arg) {
         snprintf(la, sizeof(la), "%.2f", lat->valuedouble); // ~1 km: city level is all the sun cards need
         snprintf(lo, sizeof(lo), "%.2f", lon->valuedouble);
         config_lock();
+        if (!online_allowed()) { // Hush went on while the request was in flight: drop the answer
+            config_unlock();
+            cJSON_Delete(j);
+            goto done;
+        }
         bool changed = strcmp(g_cfg.geo_zone, zone->valuestring) || strcmp(g_cfg.geo_lat, la) || strcmp(g_cfg.geo_lon, lo) ||
                        strcmp(g_cfg.tz, posix);
         if (changed) {
@@ -181,11 +202,15 @@ static void geo_task(void *arg) {
         ESP_LOGW(TAG, "auto setup lookup failed or returned an unknown zone");
     }
     cJSON_Delete(j);
+done:
+    geo_busy = false;
     vTaskDelete(NULL);
 }
 
 void clock_auto_setup(void) {
     if (!g_cfg.auto_setup || !online_allowed()) return;
     clock_start_ntp(g_cfg.ntp_server[0] ? g_cfg.ntp_server : "pool.ntp.org");
-    xTaskCreate(geo_task, "geo", 6144, NULL, 3, NULL);
+    if (geo_busy) return;
+    geo_busy = true;
+    if (xTaskCreate(geo_task, "geo", 6144, NULL, 3, NULL) != pdPASS) geo_busy = false;
 }
