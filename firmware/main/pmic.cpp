@@ -37,6 +37,15 @@ extern "C" void pmic_init(void) {
         ESP_LOGE(TAG, "AXP2101 not found");
         return;
     }
+    // Why the power chip last switched the rails on and off. A silent mid-upload reset (power-on reset reason, no
+    // panic or brownout log) points at the AXP2101 cutting power itself; this names the protection that fired.
+    ESP_LOGI(TAG, "AXP2101 power-off source: temp %d dc-over %d dc-under %d vbus-over %d vsys-under %d pwron-low %d sw %d",
+             pmu.isOverTemperatureOffSource(), pmu.isDcOverVoltageOffSource(), pmu.isDcUnderVoltageOffSource(),
+             pmu.isVbusOverVoltageOffSource(), pmu.isVsysUnderVoltageOffSource(), pmu.isPwronAlwaysLowOffSource(),
+             pmu.isSwConfigOffSource());
+    ESP_LOGI(TAG, "AXP2101 power-on source: always-high %d batt-insert %d batt-normal %d vbus-insert %d irq-low %d pwron-low %d",
+             pmu.isPoweronAlwaysHighSource(), pmu.isBattInsertOnSource(), pmu.isBattNormalOnSource(),
+             pmu.isVbusInsertOnSource(), pmu.isIrqLowOnSource(), pmu.isPwronLowOnSource());
     // Only write registers that differ, as the reference does, to avoid glitching live rails.
     if (pmu.getPowerKeyPressOffTime() != XPOWERS_POWEROFF_4S) pmu.setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
     if (pmu.getPowerKeyPressOnTime() != XPOWERS_POWERON_128MS) pmu.setPowerKeyPressOnTime(XPOWERS_POWERON_128MS);
