@@ -1041,7 +1041,9 @@ $('#btnWizard').onclick = () => openWizard(wzSettings || {});
 refreshStatus();
 // Settings first: with hundreds of thumbnails the frame serves requests slowly, and the first-visit wizard
 // (opened by loadSettings) shouldn't wait behind them.
-loadSettings().then(() => loadNetworks(false)).catch(e => toast(e.message)).finally(() => loadGallery().catch(e => toast(e.message)));
+// The frame drops connections when it's busy, and a failed settings load would leave the wizard unopened.
+const retry = (fn, n = 3) => fn().catch(e => n > 1 ? new Promise(r => setTimeout(r, 1500)).then(() => retry(fn, n - 1)) : Promise.reject(e));
+retry(loadSettings).then(() => loadNetworks(false)).catch(e => toast(e.message)).finally(() => loadGallery().catch(e => toast(e.message)));
 </script>
 </body>
 </html>
