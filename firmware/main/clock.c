@@ -98,7 +98,7 @@ static void ntp_synced(struct timeval *tv) {
 }
 
 void clock_start_ntp(const char *server) {
-    if (!server[0]) return;
+    if (!server[0] || !online_allowed()) return;
     esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG(server);
     cfg.sync_cb = ntp_synced;
     if (esp_netif_sntp_init(&cfg) == ESP_OK) ESP_LOGI(TAG, "NTP from %s", server);
@@ -185,7 +185,7 @@ static void geo_task(void *arg) {
 }
 
 void clock_auto_setup(void) {
-    if (!g_cfg.auto_setup) return;
+    if (!g_cfg.auto_setup || !online_allowed()) return;
     clock_start_ntp(g_cfg.ntp_server[0] ? g_cfg.ntp_server : "pool.ntp.org");
     xTaskCreate(geo_task, "geo", 6144, NULL, 3, NULL);
 }

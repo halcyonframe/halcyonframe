@@ -66,6 +66,14 @@ form.settings h3 { grid-column: 1 / -1; margin: 10px 0 0; font-size: 14px; }
 .ph .tag { font-size: 12px; color: var(--muted); padding: 0 6px; }
 #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
 #toast.show { opacity: 1; }
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--fg); max-width: 520px; width: calc(100% - 32px); padding: 20px; }
+dialog::backdrop { background: rgba(0,0,0,.45); }
+dialog h2 { margin-top: 0; }
+.choice { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; cursor: pointer; }
+.choice:has(input:checked) { border-color: var(--accent); }
+.choice small { display: block; color: var(--muted); }
+.wz-fields { display: grid; gap: 10px; margin: 12px 0; }
+.wz-fields label { display: grid; gap: 3px; font-size: 13px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -176,8 +184,12 @@ form.settings h3 { grid-column: 1 / -1; margin: 10px 0 0; font-size: 14px; }
         <button type="button" data-set="battery,photos,wifi,next">Technical</button>
         <button type="button" id="btnShowStatus">Show it on the frame now</button>
       </div>
+      <label class="check" style="display:flex;gap:6px;align-items:flex-start;color:var(--fg);grid-column:1/-1"><input type="checkbox" name="hush"><span><b>Hush mode.</b> The frame never connects to the internet: no time server and no location lookup. You set the clock, time zone and ZIP code yourself.</span></label>
+      <div class="row" style="grid-column:1/-1"><button type="button" id="btnWizard">Run first-time setup again</button></div>
       <label class="check" style="display:flex;gap:6px;align-items:center;color:var(--fg);grid-column:1/-1"><input type="checkbox" name="auto_setup"> Set the time, time zone and location automatically (uses the internet: pool.ntp.org and ip-api.com)</label>
       <label>ZIP code (for sunrise and sunset)<input type="text" name="zip" inputmode="numeric" maxlength="5" pattern="[0-9]{5}" placeholder="e.g. 60601"><span class="hint" id="zipHint"></span><span class="hint">ZIP locations © <a href="https://www.geonames.org/">GeoNames</a>, CC BY 4.0</span></label>
+      <label>Latitude and longitude (outside the US, or for an exact spot; a ZIP code fills these in)
+        <span class="row" style="flex-wrap:nowrap"><input type="text" name="lat" inputmode="decimal" maxlength="15" placeholder="e.g. 41.88"><input type="text" name="lon" inputmode="decimal" maxlength="15" placeholder="e.g. -87.63"></span></label>
       <label>Temperature
         <select name="temp_unit"><option value="F">°F (and 12-hour clock)</option><option value="C">°C (and 24-hour clock)</option></select>
       </label>
@@ -187,7 +199,7 @@ form.settings h3 { grid-column: 1 / -1; margin: 10px 0 0; font-size: 14px; }
       <label>Change photos at these times instead (blank = use the interval)<input type="text" name="change_times" placeholder="e.g. 07:00, 19:00" pattern="^\s*([0-2]?[0-9]:[0-5][0-9]\s*,?\s*)*$"></label>
       <label>Quiet hours from (no changes at all)<input type="time" name="quiet_start"></label>
       <label>until<input type="time" name="quiet_end"></label>
-      <label>Internet time server (optional; the frame otherwise takes the time from this page)<input type="text" name="ntp_server" placeholder="e.g. pool.ntp.org" maxlength="63"></label>
+      <label>Internet time server (optional; the frame otherwise takes the time from this page)<input type="text" name="ntp_server" placeholder="e.g. pool.ntp.org" maxlength="63"><span class="hint" id="ntpHint"></span></label>
 
       <h3>Network &amp; display</h3>
       <label>Hostname (http://name.local; changing it changes the frame's address)<input type="text" name="hostname" maxlength="32" pattern="[A-Za-z0-9\-]+" required></label>
@@ -350,6 +362,37 @@ function idHash(id) { const m = /-([0-9a-z]+)(?:_c?cw)?$/.exec(id); return m ? m
 
 if (typeof module !== 'undefined') module.exports = { PALETTE, LIN, PAL_LIN, PAL_LAB, nearest, adjust, dither, pack, unpackToRGBA, newId, hashBytes, idHash, W, H };
 </script>
+
+<dialog id="wizard" aria-labelledby="wzTitle">
+  <div data-step="1">
+    <h2 id="wzTitle">Welcome. How should your frame behave?</h2>
+    <p class="hint">You can change this any time in Settings.</p>
+    <label class="choice"><input type="radio" name="wzmode" value="hush"><span><b>Hush</b>
+      <small>The frame never connects to the internet. Nothing leaves your home. You set the time zone and ZIP code once, and this page sets the clock whenever you open it.</small></span></label>
+    <label class="choice"><input type="radio" name="wzmode" value="online"><span><b>Let the frame look things up</b>
+      <small>It sets its own clock from pool.ntp.org, and works out your time zone and approximate location from your internet address (ip-api.com). Nothing else is sent.</small></span></label>
+    <div class="row" style="justify-content:space-between;margin-top:14px">
+      <button type="button" id="wzLater">Ask me later</button><button type="button" class="primary" id="wzNext" disabled>Continue</button>
+    </div>
+  </div>
+  <div data-step="2" hidden>
+    <h2>Where and when</h2>
+    <p class="hint">Used for the clock, and for sunrise, sunset and moon cards. It stays on the frame's memory card.</p>
+    <div class="wz-fields">
+      <label>Time zone<select id="wzTz"></select><span class="hint" id="wzTzHint"></span></label>
+      <label>Temperature<select id="wzUnit"><option value="F">°F (and 12-hour clock)</option><option value="C">°C (and 24-hour clock)</option></select></label>
+      <label>ZIP code (US; optional)<input type="text" id="wzZip" inputmode="numeric" maxlength="5" placeholder="e.g. 60601"><span class="hint" id="wzZipHint"></span></label>
+      <details><summary>Outside the US? Enter coordinates</summary>
+        <span class="row" style="flex-wrap:nowrap;margin-top:6px"><input type="text" id="wzLat" inputmode="decimal" maxlength="15" placeholder="latitude, e.g. 48.86" aria-label="Latitude"><input type="text" id="wzLon" inputmode="decimal" maxlength="15" placeholder="longitude, e.g. 2.35" aria-label="Longitude"></span></details>
+    </div>
+    <div class="row" style="justify-content:space-between"><button type="button" id="wzBack">Back</button><button type="button" class="primary" id="wzFinish">Finish</button></div>
+  </div>
+  <div data-step="3" hidden>
+    <h2>All set</h2>
+    <p id="wzDone"></p>
+    <div class="row" style="justify-content:flex-end"><button type="button" class="primary" id="wzClose">Start adding photos</button></div>
+  </div>
+</dialog>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -787,31 +830,51 @@ const ZONES = [
   ['Australia/Sydney', 'Sydney / Melbourne', 'AEST-10AEDT,M10.1.0,M4.1.0/3'], ['UTC', 'UTC', 'UTC0'],
 ];
 let geoZone = '', hasGeo = false;
+let detectedTz = null; // {name, posix}: the browser's zone, translated by the frame (no internet involved)
+const detectP = (async () => {
+  try {
+    const name = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (name) detectedTz = { name, posix: (await api('/api/tz?zone=' + encodeURIComponent(name))).posix };
+  } catch (e) { /* unknown to the frame's table: the list below still works */ }
+})();
+function fillZoneOptions(sel, current) {
+  sel.innerHTML = ZONES.map(([, name, posix]) => `<option value="${posix}">${name}</option>`).join('');
+  const extra = [];
+  if (detectedTz && !ZONES.some(z => z[2] === detectedTz.posix)) extra.push([detectedTz.posix, detectedTz.name + ' (this device)']);
+  if (current && !ZONES.some(z => z[2] === current) && !extra.some(e => e[0] === current)) extra.push([current, current]); // hand-edited config.txt
+  for (const [v, t] of extra) { const o = document.createElement('option'); o.value = v; o.textContent = t; sel.appendChild(o); } // textContent: names come from the browser or config.txt
+  sel.value = current;
+}
 function fillZones(current) {
   const sel = form.tz;
-  sel.innerHTML = ZONES.map(([, name, posix]) => `<option value="${posix}">${name}</option>`).join('');
-  if (current && !ZONES.some(z => z[2] === current)) { // hand-edited config.txt: show it, as text
-    const o = document.createElement('option');
-    o.value = o.textContent = current;
-    sel.appendChild(o);
-  }
-  sel.value = current;
+  fillZoneOptions(sel, current);
   const mine = Intl.DateTimeFormat().resolvedOptions().timeZone, match = ZONES.find(z => z[0] === mine);
-  const auto = form.auto_setup.checked && geoZone;
+  const auto = form.auto_setup.checked && !form.hush.checked && geoZone;
   sel.disabled = !!auto;
   $('#tzHint').textContent = auto ? `Set automatically: ${geoZone}` :
-    match && match[2] !== current ? `This device is set to ${match[1]} time.` : '';
+    detectedTz && detectedTz.posix !== current ? `This device is set to ${match ? match[1] : detectedTz.name} time.` : '';
 }
 
 function zipLookup() {
   const z = $('input[name=zip]').value.trim(), hit = /^[0-9]{5}$/.test(z) && ZIP3[z.slice(0, 3)];
-  const auto = $('input[name=auto_setup]').checked && hasGeo;
+  const auto = $('input[name=auto_setup]').checked && !form.hush.checked && hasGeo;
   $('#zipHint').textContent = !z ? (auto ? 'Optional: the location comes from your internet connection (city level).' : 'Needed for the sunrise, sunset and daylight cards.') :
     hit ? `Location ${hit[0].toFixed(2)}, ${hit[1].toFixed(2)} (area of the ZIP code)` : 'Unknown ZIP code';
   return hit || null;
 }
-$('input[name=zip]').addEventListener('input', zipLookup); // `form` is declared further down
-$('input[name=auto_setup]').addEventListener('change', () => { fillZones($('select[name=tz]').value); zipLookup(); });
+$('input[name=zip]').addEventListener('input', () => { // `form` is declared further down
+  const hit = zipLookup();
+  if (hit) { form.lat.value = hit[0].toFixed(3); form.lon.value = hit[1].toFixed(3); touched.add('lat'); }
+});
+// Hush overrides the internet-based settings: show them locked rather than letting them look active.
+function applyHush() {
+  const h = form.hush.checked;
+  form.auto_setup.disabled = form.ntp_server.disabled = h;
+  $('#ntpHint').textContent = h ? 'Off while Hush mode is on.' : '';
+  fillZones($('select[name=tz]').value); zipLookup();
+}
+$('input[name=auto_setup]').addEventListener('change', applyHush);
+$('input[name=hush]').addEventListener('change', applyHush);
 
 // The frame keeps time on its own clock chip; this page sets it whenever it's opened (no internet needed).
 api('/api/time', { method: 'POST', body: `epoch=${Math.floor(Date.now() / 1000)}` }).catch(() => {});
@@ -823,6 +886,8 @@ form.addEventListener('input', e => touched.add(e.target.name));
 
 async function loadSettings() {
   const s = await api('/api/settings');
+  await detectP;
+  wzSettings = s;
   for (const k of ['wifi_ssid', 'ap_ssid', 'hostname', 'interval_min', 'awake_min']) form[k].value = s[k];
   form.shuffle.checked = s.shuffle;
   form.rotate180.checked = s.rotate180;
@@ -831,10 +896,13 @@ async function loadSettings() {
     form[k].value = s[k];
   form.key_status.value = s.key_status ? '1' : '0';
   form.auto_setup.checked = s.auto_setup;
+  form.hush.checked = s.hush || !s.wizard_done; // undecided frames already behave as hushed
+  form.lat.value = s.lat; form.lon.value = s.lon;
   geoZone = s.geo_zone || ''; hasGeo = s.has_geo;
   setCards(s.cards || 'indoor,battery,photos,sun');
   fillZones(s.tz);
-  zipLookup();
+  applyHush();
+  if (!s.wizard_done) openWizard(s);
   if (s.orientation !== frameOrient) { frameOrient = s.orientation; orientationChanged(); }
   form.wifi_pass.placeholder = s.wifi_pass_set ? '(unchanged)' : '';
   form.ap_pass.placeholder = s.ap_pass_set ? '(unchanged)' : '';
@@ -898,8 +966,9 @@ $('#btnSave').onclick = async () => {
     body.set(k, form[k].value.trim());
   body.set('cards', cardSelects().map(s => s.value).join(','));
   body.set('auto_setup', form.auto_setup.checked ? 1 : 0);
-  const loc = zipLookup();
-  if (touched.has('zip')) { body.set('lat', loc ? loc[0].toFixed(3) : ''); body.set('lon', loc ? loc[1].toFixed(3) : ''); }
+  body.set('hush', form.hush.checked ? 1 : 0);
+  body.set('wizard_done', 1); // saving the settings is a decision too
+  body.set('lat', form.lat.value.trim()); body.set('lon', form.lon.value.trim());
   // Passwords are write-only: send them only when edited, so saving other fields never clears them.
   for (const k of ['wifi_pass', 'ap_pass']) if (touched.has(k)) body.set(k, form[k].value);
   const connect = wifiTouched(), ssid = form.wifi_ssid.value.trim();
@@ -919,6 +988,55 @@ $('#btnSave').onclick = async () => {
   } catch (e) { toast('Save failed: ' + e.message); }
 };
 $('#btnReboot').onclick = async () => { try { await api('/api/reboot', { method: 'POST' }); toast('Rebooting…'); setTimeout(() => location.reload(), 12000); } catch (e) { toast(e.message); } };
+
+/* ---------- first-visit wizard ---------- */
+const wz = $('#wizard');
+const wzStep = n => wz.querySelectorAll('[data-step]').forEach(d => { d.hidden = +d.dataset.step !== n; });
+let wzSettings = null;
+function openWizard(s) {
+  if (wz.open) return;
+  wzSettings = s;
+  wz.querySelectorAll('input[name=wzmode]').forEach(r => { r.checked = false; });
+  $('#wzNext').disabled = true;
+  fillZoneOptions($('#wzTz'), (detectedTz && detectedTz.posix) || s.tz);
+  $('#wzUnit').value = s.temp_unit;
+  $('#wzZip').value = s.zip; $('#wzLat').value = s.lat; $('#wzLon').value = s.lon;
+  wzZip();
+  wzStep(1);
+  wz.showModal();
+}
+function wzZip() {
+  const z = $('#wzZip').value.trim(), hit = /^[0-9]{5}$/.test(z) && ZIP3[z.slice(0, 3)];
+  $('#wzZipHint').textContent = !z ? '' : hit ? `Location ${hit[0].toFixed(2)}, ${hit[1].toFixed(2)} (area of the ZIP code)` : 'Unknown ZIP code';
+  if (hit) { $('#wzLat').value = hit[0].toFixed(3); $('#wzLon').value = hit[1].toFixed(3); }
+  return hit || null;
+}
+$('#wzZip').addEventListener('input', wzZip);
+wz.addEventListener('change', e => { if (e.target.name === 'wzmode') $('#wzNext').disabled = false; });
+$('#wzLater').onclick = () => wz.close();
+$('#wzClose').onclick = () => wz.close();
+$('#wzBack').onclick = () => wzStep(1);
+async function wzSave(fields, done) {
+  try {
+    await api('/api/settings', { method: 'POST', body: new URLSearchParams({ ...fields, wizard_done: 1 }) });
+    $('#wzDone').textContent = done;
+    wzStep(3);
+    loadSettings();
+  } catch (e) { toast('Could not save: ' + e.message); }
+}
+$('#wzNext').onclick = () => {
+  if (wz.querySelector('input[name=wzmode]:checked').value === 'hush') return wzStep(2);
+  wzSave({ hush: 0, auto_setup: 1 }, 'The frame will set its clock and location itself whenever it is on your Wi-Fi. You can switch on Hush mode in Settings at any time.');
+};
+$('#wzFinish').onclick = () => {
+  const z = $('#wzZip').value.trim();
+  if (z && !wzZip()) return toast('That ZIP code is not in the list. Clear it, or enter coordinates instead.');
+  const lat = $('#wzLat').value.trim(), lon = $('#wzLon').value.trim();
+  if (!!lat !== !!lon) return toast('Enter both latitude and longitude, or neither.');
+  wzSave({ hush: 1, auto_setup: 0, tz: $('#wzTz').value, temp_unit: $('#wzUnit').value, zip: z, lat, lon },
+    'Hush mode is on: the frame never connects to the internet. This page sets its clock whenever you open it.');
+};
+$('#btnWizard').onclick = () => openWizard(wzSettings || {});
 
 refreshStatus();
 loadGallery().catch(e => toast(e.message));

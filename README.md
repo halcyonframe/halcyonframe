@@ -11,7 +11,8 @@ e-paper frame (sold by Waveshare and its resellers). It replaces the vendor's cl
 - **A web page served by the frame itself.** Add photos from your phone or computer and the browser crops,
   colour-maps and dithers them for the panel. Batch-upload hundreds of photos at once.
 - **Photos and settings on the TF card.** No account, no app, no subscription, no cloud storage. Optional
-  automatic setup asks `pool.ntp.org` for the time and `ip-api.com` for your time zone; one switch turns it off.
+  automatic setup asks `pool.ntp.org` for the time and `ip-api.com` for your time zone; **Hush mode** turns off every
+  outbound connection. You choose in a short wizard the first time you open the page.
 - **A status screen** in seven typefaces: clock, indoor temperature and humidity (with a mold-risk flag),
   battery, storage, sunrise/sunset, moon, daylight. Four configurable cards.
 - **Calm by design.** E-paper keeps its picture with no power, so the frame sleeps between changes and

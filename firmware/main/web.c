@@ -7,10 +7,12 @@
 #include "display.h"
 #include "ota.h"
 #include "typefaces.h"
+#include "tzdb.h"
 #include "pmic.h"
 #include "storage.h"
 #include "wifi.h"
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -301,11 +303,12 @@ static esp_err_t h_settings_get(httpd_req_t *req) {
     snprintf(buf + o, sizeof(buf) - o,
              ",\"wifi_pass_set\":%s,\"ap_pass_set\":%s,\"interval_min\":%d,\"awake_min\":%d,"
              "\"shuffle\":%s,\"rotate180\":%s,\"orientation\":\"%s\",\"status_every\":%d,\"status_min\":%d,"
-             "\"key_status\":%s,\"typeface\":%d,\"auto_setup\":%s,\"has_geo\":%s}",
+             "\"key_status\":%s,\"typeface\":%d,\"auto_setup\":%s,\"has_geo\":%s,\"hush\":%s,\"wizard_done\":%s}",
              g_cfg.wifi_pass[0] ? "true" : "false", g_cfg.ap_pass[0] ? "true" : "false", g_cfg.interval_min,
              g_cfg.awake_min, g_cfg.shuffle ? "true" : "false", g_cfg.rotate180 ? "true" : "false",
              ORIENT_NAMES[g_cfg.orientation], g_cfg.status_every, g_cfg.status_min, g_cfg.key_status ? "true" : "false",
-             g_cfg.typeface, g_cfg.auto_setup ? "true" : "false", g_cfg.geo_lat[0] ? "true" : "false");
+             g_cfg.typeface, g_cfg.auto_setup ? "true" : "false", g_cfg.geo_lat[0] ? "true" : "false",
+             g_cfg.hush ? "true" : "false", g_cfg.wizard_done ? "true" : "false");
     return send_json(req, buf);
 }
 
@@ -341,7 +344,15 @@ static esp_err_t settings_post(httpd_req_t *req) {
     STR_FIELD(ntp_server) STR_FIELD(cards) STR_FIELD(zip) STR_FIELD(lat) STR_FIELD(lon)
     INT_FIELD(interval_min) INT_FIELD(awake_min) INT_FIELD(shuffle) INT_FIELD(rotate180)
     INT_FIELD(status_every) INT_FIELD(status_min) INT_FIELD(key_status) INT_FIELD(typeface) INT_FIELD(auto_setup)
+    INT_FIELD(hush) INT_FIELD(wizard_done)
     if (c.typeface >= TYPEFACE_COUNT) c.typeface = 0;
+    // Coordinates are typed by hand outside the US (the ZIP table is US-only); they feed the sun and moon cards.
+    if (c.lat[0] || c.lon[0]) {
+        char *e1, *e2;
+        double la = strtod(c.lat, &e1), lo = strtod(c.lon, &e2);
+        if (!c.lat[0] || !c.lon[0] || *e1 || *e2 || fabs(la) > 90 || fabs(lo) > 180)
+            return send_err(req, "400 Bad Request", "latitude/longitude invalid");
+    }
     // POSIX TZ strings only use these; anything else is a mistake or an attempt to inject markup.
     if (strspn(c.tz, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789,.:/+-<>") != strlen(c.tz))
         return send_err(req, "400 Bad Request", "time zone invalid");
@@ -412,6 +423,21 @@ static esp_err_t h_wifi_scan(httpd_req_t *req) {
     app_touch();
     wifi_scan();
     return send_networks(req);
+}
+
+// GET /api/tz?zone=Europe/Paris -> {"posix":"CET-1CEST,..."}. The browser knows its own zone by IANA name; the frame
+// holds the table that turns it into the rule it needs, so no internet lookup is involved.
+static esp_err_t h_tz(httpd_req_t *req) {
+    char q[96] = "", zone[64] = "";
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) != ESP_OK || httpd_query_key_value(q, "zone", zone, sizeof(zone)) != ESP_OK)
+        return send_err(req, "400 Bad Request", "zone required");
+    url_decode(zone); // "America%2FChicago"
+    const char *posix = tzdb_posix(zone);
+    if (!posix) return send_err(req, "404 Not Found", "unknown zone");
+    char buf[128] = "{\"posix\":";
+    json_str(buf, sizeof(buf), posix);
+    strlcat(buf, "}", sizeof(buf));
+    return send_json(req, buf);
 }
 
 // POST /api/time  body: epoch=<seconds>. The web UI sends the browser's clock on load: that's how the frame
@@ -542,6 +568,7 @@ void web_start(void) {
         {.uri = "/api/wifi/scan", .method = HTTP_POST, .handler = h_wifi_scan},
         {.uri = "/api/ota", .method = HTTP_POST, .handler = h_ota},
         {.uri = "/api/time", .method = HTTP_POST, .handler = h_time},
+        {.uri = "/api/tz", .method = HTTP_GET, .handler = h_tz},
         {.uri = "/api/show_status", .method = HTTP_POST, .handler = h_show_status},
         {.uri = "/api/sleep", .method = HTTP_POST, .handler = h_sleep},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = h_reboot},

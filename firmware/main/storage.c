@@ -95,7 +95,7 @@ void storage_space(uint64_t *total, uint64_t *free_bytes) {
 
 /* ---- config.txt: plain key=value lines so it can also be edited by hand on a PC ---- */
 
-#define CONFIG_KEYS 28 // keys config_write() emits; a stale count only costs one extra save
+#define CONFIG_KEYS 30 // keys config_write() emits; a stale count only costs one extra save
 #define OLD_SHARED_AP_PASS "photoframe" // every frame used this before per-frame passwords
 
 // Per-frame hotspot password. It's shown on the setup screen with a join QR code, so being random costs
@@ -141,6 +141,8 @@ static void config_defaults(void) {
     g_cfg.auto_setup = true;
 }
 
+bool online_allowed(void) { return g_cfg.wizard_done && !g_cfg.hush; }
+
 const char *const ORIENT_NAMES[3] = {"landscape", "cw", "ccw"};
 
 #define SET_STR(field) if (!strcmp(key, #field)) { snprintf(g_cfg.field, sizeof(g_cfg.field), "%s", val); seen++; continue; }
@@ -169,7 +171,7 @@ void config_load(void) {
         SET_INT(interval_min) SET_INT(awake_min) SET_INT(shuffle) SET_INT(rotate180)
         SET_STR(tz) SET_STR(change_times) SET_STR(quiet_start) SET_STR(quiet_end) SET_STR(temp_unit) SET_STR(ntp_server)
         SET_INT(status_every) SET_INT(status_min) SET_INT(key_status) SET_INT(typeface)
-        SET_STR(cards) SET_STR(zip) SET_STR(lat) SET_STR(lon) SET_INT(auto_setup)
+        SET_STR(cards) SET_STR(zip) SET_STR(lat) SET_STR(lon) SET_INT(auto_setup) SET_INT(hush) SET_INT(wizard_done)
         SET_STR(geo_zone) SET_STR(geo_lat) SET_STR(geo_lon)
         if (!strcmp(key, "orientation") && ++seen)
             for (int i = 0; i < 3; i++)
@@ -225,12 +227,12 @@ static bool config_write(void) {
             "# from indoor, battery, photos, wifi, sun, moon, daylight, next\n"
             "typeface=%d\ncards=%s\nzip=%s\nlat=%s\nlon=%s\n"
             "# 1 = set time (pool.ntp.org), time zone and location automatically when on Wi-Fi; 0 = fully local\n"
-            "auto_setup=%d\ngeo_zone=%s\ngeo_lat=%s\ngeo_lon=%s\n",
+            "auto_setup=%d\ngeo_zone=%s\ngeo_lat=%s\ngeo_lon=%s\nhush=%d\nwizard_done=%d\n",
             g_cfg.wifi_ssid, g_cfg.wifi_pass, g_cfg.ap_ssid, g_cfg.ap_pass, g_cfg.hostname,
             g_cfg.interval_min, g_cfg.awake_min, g_cfg.shuffle, g_cfg.rotate180, ORIENT_NAMES[g_cfg.orientation],
             g_cfg.tz, g_cfg.change_times, g_cfg.quiet_start, g_cfg.quiet_end, g_cfg.status_every, g_cfg.status_min,
             g_cfg.key_status, g_cfg.temp_unit, g_cfg.ntp_server, g_cfg.typeface, g_cfg.cards, g_cfg.zip, g_cfg.lat,
-            g_cfg.lon, g_cfg.auto_setup, g_cfg.geo_zone, g_cfg.geo_lat, g_cfg.geo_lon);
+            g_cfg.lon, g_cfg.auto_setup, g_cfg.geo_zone, g_cfg.geo_lat, g_cfg.geo_lon, g_cfg.hush, g_cfg.wizard_done);
     bool ok = fclose(f) == 0;
     // FAT rename won't overwrite an existing file
     if (ok) {

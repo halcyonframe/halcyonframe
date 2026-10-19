@@ -34,10 +34,16 @@ typedef struct {
     char zip[11];         // shown in the UI; the browser turns it into lat/lon (sun cards)
     char lat[16], lon[16];
     bool auto_setup;      // time (pool.ntp.org), time zone and location from the internet when on Wi-Fi
+    bool hush;            // master switch: the frame makes no outbound connections at all (overrides auto_setup, ntp_server)
+    bool wizard_done;     // the first-visit wizard has been answered; until then the frame behaves as if hush were on
     char geo_zone[48], geo_lat[16], geo_lon[16]; // last automatic lookup (zone name for the UI, city-level coords)
 } config_t;
 
 extern config_t g_cfg;
+
+// The one gate for anything that leaves the home network (time, location, and any future online feature).
+// Undecided counts as hush, so a new frame never calls out before its owner has chosen.
+bool online_allowed(void);
 extern const char *const ORIENT_NAMES[3]; // config.txt / API spelling of orient_t
 
 bool storage_mount(void);
