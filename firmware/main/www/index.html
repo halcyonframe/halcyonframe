@@ -1039,8 +1039,9 @@ $('#wzFinish').onclick = () => {
 $('#btnWizard').onclick = () => openWizard(wzSettings || {});
 
 refreshStatus();
-loadGallery().catch(e => toast(e.message));
-loadSettings().then(() => loadNetworks(false)).catch(e => toast(e.message));
+// Settings first: with hundreds of thumbnails the frame serves requests slowly, and the first-visit wizard
+// (opened by loadSettings) shouldn't wait behind them.
+loadSettings().then(() => loadNetworks(false)).catch(e => toast(e.message)).finally(() => loadGallery().catch(e => toast(e.message)));
 </script>
 </body>
 </html>
