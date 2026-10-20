@@ -8,7 +8,7 @@ mkdir -p "$out"
 qr=managed_components/espressif__qrcode
 [ -d "$qr" ] || { echo "run idf.py build once first (fetches $qr)"; exit 1; }
 cc -O2 -std=c11 -Wall -Wno-missing-braces -I tools/host -I main -I "$qr/include" -I "$qr" \
-   tools/render_screens.c main/screens.c main/status.c main/astro.c main/gfx.c main/font.c main/typefaces.c "$qr/esp_qrcode_main.c" "$qr/esp_qrcode_wrapper.c" "$qr/qrcodegen.c" \
+   tools/render_screens.c main/screens.c main/status.c main/astro.c main/gfx.c main/font.c main/typefaces.c main/uifonts.c "$qr/esp_qrcode_main.c" "$qr/esp_qrcode_wrapper.c" "$qr/qrcodegen.c" \
    -lm -o "$out/render_screens"
 status=0
 "$out/render_screens" "$out" || status=$?

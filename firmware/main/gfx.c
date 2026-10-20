@@ -155,7 +155,7 @@ int gfx_ptext(canvas_t *c, int x, int baseline, const pfont_t *f, const char *s,
         first = false;
         if (c) {
             int row = (g->w + 7) / 8;
-            const uint8_t *bits = GLYPH_BITS + g->off;
+            const uint8_t *bits = (f->bits ? f->bits : GLYPH_BITS) + g->off;
             for (int j = 0; j < g->h; j++)
                 for (int i = 0; i < g->w; i++)
                     if (bits[j * row + i / 8] & (0x80 >> (i % 8))) put(c, x + g->x + i, baseline + g->y + j, color);
@@ -196,4 +196,43 @@ void gfx_half_disc(canvas_t *c, int cx, int cy, int r, uint8_t color) {
     for (int j = -r; j <= 0; j++)
         for (int i = -r; i <= r; i++)
             if (i * i + j * j <= r * r) put(c, cx + i, cy + j, color);
+}
+
+/* ---- the mark ---- */
+
+// Same geometry as docs/mark.svg (100x100 units), so the frame, the web page and the website show one mark.
+static bool in_rrect(float u, float v, float x0, float y0, float x1, float y1, float r) {
+    if (u < x0 || u > x1 || v < y0 || v > y1) return false;
+    float cx = u < x0 + r ? x0 + r : u > x1 - r ? x1 - r : u, cy = v < y0 + r ? y0 + r : v > y1 - r ? y1 - r : v;
+    return (u - cx) * (u - cx) + (v - cy) * (v - cy) <= r * r;
+}
+
+// 0 = background, 1 = black, 2 = yellow, 3 = blue, for the point (u, v) in mark units.
+static int mark_color(float u, float v) {
+    static const float waves[3][3] = {{62, 18, 82}, {72, 28, 72}, {82, 38, 62}}; // y, x from, x to (6 thick, round ends)
+    for (int i = 0; i < 3; i++) {
+        float y = waves[i][0], a = waves[i][1], b = waves[i][2];
+        float cx = u < a ? a : u > b ? b : u;
+        if ((u - cx) * (u - cx) + (v - y) * (v - y) <= 9) return 3;
+    }
+    float d2 = (u - 50) * (u - 50) + (v - 58) * (v - 58);
+    // the sun's outline (3 thick) is an arc above the waterline plus the straight edge under it
+    if ((d2 >= 20.5f * 20.5f && d2 <= 23.5f * 23.5f && v <= 59.5f) || (v >= 56.5f && v <= 59.5f && u >= 26.5f && u <= 73.5f))
+        return 1;
+    if (in_rrect(u, v, 2.5f, 2.5f, 97.5f, 97.5f, 17.5f) && !in_rrect(u, v, 9.5f, 9.5f, 90.5f, 90.5f, 10.5f)) return 1; // frame, 7 thick
+    if (d2 <= 22.f * 22.f && v <= 58.f) return 2;
+    return 0;
+}
+
+void gfx_mark(canvas_t *c, int x, int y, int size) {
+    for (int j = 0; j < size; j++)
+        for (int i = 0; i < size; i++) {
+            int n[4] = {0, 0, 0, 0};
+            for (int sy = 0; sy < 4; sy++) // 4x4 samples per pixel, then the majority colour wins
+                for (int sx = 0; sx < 4; sx++)
+                    n[mark_color((i + (sx + .5f) / 4) * 100.f / size, (j + (sy + .5f) / 4) * 100.f / size)]++;
+            if (n[1] + n[2] + n[3] < 8) continue; // under half covered: leave the pixel alone
+            int best = n[3] >= n[1] && n[3] >= n[2] ? 3 : n[1] >= n[2] ? 1 : 2;
+            put(c, x + i, y + j, best == 3 ? EPD_BLUE : best == 1 ? EPD_BLACK : EPD_YELLOW);
+        }
 }

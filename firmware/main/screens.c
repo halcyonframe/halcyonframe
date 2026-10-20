@@ -24,6 +24,7 @@ typedef struct {
     const char *qr;
     int qr_module; // preferred QR module size in px; reduced if the screen would overflow
     line_t lines[6];
+    const char *caption; // small centred text under the QR code ("Scan me to ..."), branded documents only
 } step_t;
 
 typedef struct {
@@ -33,6 +34,7 @@ typedef struct {
     step_t steps[2];
     const char *footer; // on a yellow band at the bottom
     const char *note;   // small line just above the footer (firmware version on the start-up screen)
+    bool brand;         // Halcyon Frame mark and name on top, Fraunces title, proportional Inter text
 } doc_t;
 
 // Titles, footers and notes use the Clean typeface (Inter): friendlier than the bitmap terminal font,
@@ -42,6 +44,11 @@ typedef struct {
 #define FOOTER_FONT (TYPEFACES[0].date_port) // Inter Regular 34
 #define FOOTER_LINE 40
 #define NOTE_FONT (TYPEFACES[0].sub[0])     // Inter Regular 21
+
+#define CAPTION_FONT (TYPEFACES[0].sub[0]) // Inter Regular 21
+#define CAPTION_LINE 25
+#define PBODY_LINE 31 // branded documents: Inter 26 px
+#define PBIG_LINE 62  // Inter 52 px
 
 #define LINE_BODY 38 // 32 px glyphs plus spacing
 #define LINE_BIG 68
@@ -78,9 +85,10 @@ static int text_block(canvas_t *c, bool draw, int x, int y, int w, const font_t 
     return h;
 }
 
-// Word-wrapped proportional text; y is the top of the first line. Returns the height used.
-static int ptext_block(canvas_t *c, bool draw, int x, int y, int w, const pfont_t *f, int lh, uint8_t color,
-                       const char *s) {
+// Word-wrapped proportional text; y is the top of the first line. Returns the height used. With center, each
+// line is centred in the width w.
+static int ptext_block_c(canvas_t *c, bool draw, int x, int y, int w, const pfont_t *f, int lh, uint8_t color,
+                         const char *s, bool center) {
     char buf[160];
     int h = 0;
     while (*s) {
@@ -98,14 +106,29 @@ static int ptext_block(canvas_t *c, bool draw, int x, int y, int w, const pfont_
         size_t take = brk ? brk : fit ? fit : 1;
         memcpy(buf, s, take);
         buf[take] = 0;
-        if (draw) gfx_ptext(c, x, y + h + f->ascent, f, buf, color, 0);
+        if (draw) gfx_ptext(c, center ? x + (w - gfx_pwidth(f, buf, 0)) / 2 : x, y + h + f->ascent, f, buf, color, 0);
         h += lh;
         s += take;
     }
     return h;
 }
 
-static int draw_line(canvas_t *c, bool draw, int x, int y, int w, line_t l) {
+static int ptext_block(canvas_t *c, bool draw, int x, int y, int w, const pfont_t *f, int lh, uint8_t color,
+                       const char *s) {
+    return ptext_block_c(c, draw, x, y, w, f, lh, color, s, false);
+}
+
+static int draw_line(canvas_t *c, bool draw, int x, int y, int w, line_t l, bool prop) {
+    if (prop) { // branded documents: proportional Inter instead of the terminal font
+        uint8_t col = l.style == ST_RED ? EPD_RED : l.style == ST_GREEN ? EPD_GREEN : l.style == ST_BIG ? EPD_BLUE : EPD_BLACK;
+        if (l.style == ST_BIG)
+            for (int k = 0; k < UI_BIG_SIZES_N; k++)
+                if (gfx_pwidth(UI_BIG[k], l.text, 0) <= w) {
+                    if (draw) gfx_ptext(c, x, y + UI_BIG[k]->ascent, UI_BIG[k], l.text, EPD_BLUE, 0);
+                    return PBIG_LINE;
+                }
+        return ptext_block(c, draw, x, y, w, UI_BODY[0], PBODY_LINE, col, l.text); // a long name wraps
+    }
     // Big text falls back to body size (wrapped) when a long name won't fit on one line.
     if (l.style == ST_BIG && gfx_text_width(&font_32x64, l.text) <= w) {
         if (draw) gfx_text(c, x, y, &font_32x64, l.text, EPD_BLUE);
@@ -145,16 +168,26 @@ static bool layout(canvas_t *c, const doc_t *d, bool draw, int shrink) {
         if (draw) gfx_ptext(c, m, bottom + 6 + NOTE_FONT->ascent, NOTE_FONT, d->note, EPD_BLACK, 0);
     }
 
-    int tw = w - (d->check ? 80 : 0);
-    int th = ptext_block(c, draw, m, y, tw, TITLE_FONT, TITLE_LINE, EPD_BLACK, d->title);
-    if (d->check && draw) {
-        int last = gfx_pwidth(TITLE_FONT, d->title, 0);
-        draw_check(c, m + (last < tw ? last : tw) + 20, y + th - TITLE_LINE);
+    if (d->brand) { // the mark and the name, as in the website's header
+        int ms = land ? 52 : 48;
+        if (draw) {
+            gfx_mark(c, m, y, ms);
+            gfx_ptext(c, m + ms + 14, y + (ms + gfx_pcap(BRAND_NAME)) / 2, BRAND_NAME, "Halcyon Frame", EPD_BLACK, 0);
+        }
+        y += ms + (land ? 10 : 18);
     }
-    y += th + 16;
+    const pfont_t *tfont = d->brand ? BRAND_TITLE : TITLE_FONT;
+    int tline = d->brand ? 38 : TITLE_LINE;
+    int tw = w - (d->check ? 80 : 0);
+    int th = ptext_block(c, draw, m, y, tw, tfont, tline, EPD_BLACK, d->title);
+    if (d->check && draw) {
+        int last = gfx_pwidth(tfont, d->title, 0);
+        draw_check(c, m + (last < tw ? last : tw) + 20, y + th - tline);
+    }
+    y += th + (d->brand ? 10 : 16);
 
-    for (int i = 0; i < 2 && d->intro[i].text; i++) y += draw_line(c, draw, m, y, w, d->intro[i]);
-    if (d->intro[0].text) y += 12;
+    for (int i = 0; i < 2 && d->intro[i].text; i++) y += draw_line(c, draw, m, y, w, d->intro[i], d->brand);
+    if (d->intro[0].text) y += d->brand ? 8 : 12;
 
     for (int i = 0; i < 2; i++) {
         const step_t *st = &d->steps[i];
@@ -162,6 +195,8 @@ static bool layout(canvas_t *c, const doc_t *d, bool draw, int shrink) {
         int mod = imax(2, st->qr_module - shrink), vw = 0, vh = 0;
         if (st->visual == VIS_QR) vw = vh = gfx_qr(NULL, 0, 0, mod, st->qr);
         if (st->visual == VIS_BATTERY) vw = BATTERY_W, vh = BATTERY_H;
+        int capw = vw ? vw + 40 : 0, caph = 0;
+        if (st->caption && vw && shrink < 2) caph = ptext_block_c(c, false, 0, 0, capw, CAPTION_FONT, CAPTION_LINE, 0, st->caption, true) + 6;
         int r = land ? 28 : 20, tx = m + (st->num ? 2 * r + 16 : 0);
         // Landscape: picture to the right of the text. Portrait is too narrow for that (names would drop
         // to small type), so the picture goes under the text instead.
@@ -174,10 +209,13 @@ static bool layout(canvas_t *c, const doc_t *d, bool draw, int shrink) {
         }
         int ty = y;
         for (int k = 0; k < 6 && st->lines[k].text; k++)
-            if (st->lines[k].style != ST_EXTRA || shrink < 2) ty += draw_line(c, draw, tx, ty, tcol, st->lines[k]);
+            if (st->lines[k].style != ST_EXTRA || shrink < 2) ty += draw_line(c, draw, tx, ty, tcol, st->lines[k], d->brand);
         int vx = land ? c->w - m - vw : tx, vy = land ? y : ty + 4;
         if (draw && st->visual == VIS_QR) gfx_qr(c, vx, vy, mod, st->qr);
         if (draw && st->visual == VIS_BATTERY) draw_battery(c, vx, vy);
+        if (draw && caph)
+            ptext_block_c(c, true, vx + vw / 2 - capw / 2, vy + vh + 6, capw, CAPTION_FONT, CAPTION_LINE, EPD_BLACK, st->caption, true);
+        vh += caph;
         int gap = shrink >= 3 ? 6 : 16;
         y = land ? y + imax(ty - y, vh) + gap : vy + vh + gap;
     }
@@ -273,15 +311,16 @@ bool screen_render(screen_t s, const screen_info_t *in, uint8_t *buf) {
             // On its own hotspot: one QR joins it, the other opens the page.
             snprintf(t1, sizeof(t1), "Wi-Fi: %s (mine)", in->ap_ssid);
             snprintf(t2, sizeof(t2), "Open: http://%s", in->ip);
-            d.steps[0] = (step_t) {0, VIS_QR, wifi_qr, 3, {{t1, ST_BODY}, {pass_line, ST_BODY}}};
-            d.steps[1] = (step_t) {0, VIS_QR, url, 3, {{t2, ST_BODY}, {t3, ST_BODY}, {card, ST_BODY}, {t4, ST_EXTRA}}};
+            d.steps[0] = (step_t) {0, VIS_QR, wifi_qr, 3, {{t1, ST_BODY}, {pass_line, ST_BODY}}, "Scan me to join the Wi-Fi"};
+            d.steps[1] = (step_t) {0, VIS_QR, url, 3, {{t2, ST_BODY}, {t3, ST_BODY}, {card, ST_BODY}, {t4, ST_EXTRA}}, "Scan me to open settings"};
         } else {
             snprintf(t1, sizeof(t1), "Wi-Fi: %s", in->wifi_ssid);
             snprintf(t2, sizeof(t2), "Open: http://%s.local", in->hostname);
             snprintf(t5, sizeof(t5), "  or http://%s", in->ip);
-            d.steps[0] = (step_t) {0, VIS_QR, url, 4, {{t1, ST_BODY}, {t2, ST_BODY}, {t5, ST_BODY}, {t3, ST_BODY}, {card, ST_BODY}, {t4, ST_EXTRA}}};
+            d.steps[0] = (step_t) {0, VIS_QR, url, 4, {{t1, ST_BODY}, {t2, ST_BODY}, {t5, ST_BODY}, {t3, ST_BODY}, {card, ST_BODY}, {t4, ST_EXTRA}}, "Scan me to open settings"};
         }
         d.title = "How to reach me";
+        d.brand = true;
         // Start-up screen: say which firmware is running and how an update went, and that photos follow.
         snprintf(fw, sizeof(fw), "Firmware %s", in->fw_version ? in->fw_version : "?");
         if (in->boot && in->update_result)

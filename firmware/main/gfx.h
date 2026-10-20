@@ -34,6 +34,8 @@ int gfx_pwidth(const pfont_t *f, const char *s, int tracking);
 int gfx_pcap(const pfont_t *f); // height of a capital/figure above the baseline ("0"), for vertical alignment
 void gfx_poly(canvas_t *c, const int (*pts)[2], int n, uint8_t color); // filled, even-odd
 void gfx_half_disc(canvas_t *c, int cx, int cy, int r, uint8_t color); // upper half
+// The Halcyon Frame mark (docs/mark.svg): a sun setting on still water, inside a frame. size x size px at x, y.
+void gfx_mark(canvas_t *c, int x, int y, int size);
 // QR code with a white quiet zone of 4 modules on each side. Returns the drawn size in pixels, 0 on error.
 // Pass c = NULL to only measure.
 int gfx_qr(canvas_t *c, int x, int y, int module_px, const char *text);

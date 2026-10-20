@@ -7,13 +7,14 @@ typedef struct {
     uint8_t w, h;     // bitmap size; rows padded to whole bytes, MSB = leftmost pixel
     int16_t x, y;     // bitmap offset from the pen position (x) and from the baseline (y, negative = above)
     uint8_t adv;      // advance width
-    uint32_t off;     // offset into GLYPH_BITS
+    uint32_t off;     // offset into the font's bitmap array (GLYPH_BITS unless the font has its own)
 } pglyph_t;
 
 typedef struct {
     uint8_t size, ascent, descent;
     uint8_t count;
     const pglyph_t *glyphs; // sorted by code point
+    const uint8_t *bits;    // glyph bitmaps; NULL = GLYPH_BITS (the status-screen typefaces)
 } pfont_t;
 
 #define TYPEFACE_COUNT 7
@@ -29,4 +30,12 @@ typedef struct {
 
 extern const typeface_t TYPEFACES[TYPEFACE_COUNT];
 extern const pfont_t *const LABEL_FONT; // small caps labels and tags, the same for every typeface
+
+// Setup screens and branding (uifonts.c): the name and title in Fraunces as on the website, instructions in Inter.
+#define UI_BODY_SIZES_N 2 // 26, 22 px
+#define UI_BIG_SIZES_N 2  // 52, 40 px
+extern const pfont_t *const BRAND_NAME;  // Fraunces 40
+extern const pfont_t *const BRAND_TITLE; // Fraunces 34
+extern const pfont_t *const UI_BODY[UI_BODY_SIZES_N];
+extern const pfont_t *const UI_BIG[UI_BIG_SIZES_N];
 extern const uint8_t GLYPH_BITS[];
