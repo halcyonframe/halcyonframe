@@ -149,7 +149,9 @@ static void draw_battery(canvas_t *c, int x, int y) {
     gfx_rect(c, x + 16, y + 16, 16, BATTERY_H - 32, EPD_RED); // the last sliver of charge
 }
 
-// Lays the document out top to bottom. Returns false if it runs into the footer.
+// Lays the document out top to bottom. Returns false if it runs into the footer. shrink is how much to give up
+// to make room: -1 nothing (QR captions shown), 0 the captions go first, then QR modules get smaller (1-3), and from
+// 2 the optional reassurance lines go too.
 static bool layout(canvas_t *c, const doc_t *d, bool draw, int shrink) {
     bool land = c->orient == ORIENT_LANDSCAPE;
     int m = land ? 32 : 24, w = c->w - 2 * m, y = 16;
@@ -192,11 +194,11 @@ static bool layout(canvas_t *c, const doc_t *d, bool draw, int shrink) {
     for (int i = 0; i < 2; i++) {
         const step_t *st = &d->steps[i];
         if (!st->lines[0].text) break;
-        int mod = imax(2, st->qr_module - shrink), vw = 0, vh = 0;
+        int mod = imax(2, st->qr_module - imax(shrink, 0)), vw = 0, vh = 0;
         if (st->visual == VIS_QR) vw = vh = gfx_qr(NULL, 0, 0, mod, st->qr);
         if (st->visual == VIS_BATTERY) vw = BATTERY_W, vh = BATTERY_H;
         int capw = vw ? vw + 40 : 0, caph = 0;
-        if (st->caption && vw && shrink < 2) caph = ptext_block_c(c, false, 0, 0, capw, CAPTION_FONT, CAPTION_LINE, 0, st->caption, true) + 6;
+        if (st->caption && vw && shrink < 0) caph = ptext_block_c(c, false, 0, 0, capw, CAPTION_FONT, CAPTION_LINE, 0, st->caption, true) + 6;
         int r = land ? 28 : 20, tx = m + (st->num ? 2 * r + 16 : 0);
         // Landscape: picture to the right of the text. Portrait is too narrow for that (names would drop
         // to small type), so the picture goes under the text instead.
@@ -205,7 +207,8 @@ static bool layout(canvas_t *c, const doc_t *d, bool draw, int shrink) {
             int cy = y + (st->lines[0].style == ST_BIG ? LINE_BIG : LINE_BODY) / 2 - 2;
             char digit[2] = {(char) ('0' + st->num), 0};
             gfx_disc(c, m + r, cy, r, EPD_BLUE);
-            gfx_text(c, m + r - 8, cy - 16, &font_16x32, digit, EPD_WHITE);
+            if (d->brand) gfx_ptext(c, m + r - gfx_pwidth(UI_BIG[1], digit, 0) / 2, cy + gfx_pcap(UI_BIG[1]) / 2, UI_BIG[1], digit, EPD_WHITE, 0);
+            else gfx_text(c, m + r - 8, cy - 16, &font_16x32, digit, EPD_WHITE);
         }
         int ty = y;
         for (int k = 0; k < 6 && st->lines[k].text; k++)
@@ -264,8 +267,8 @@ bool screen_render(screen_t s, const screen_info_t *in, uint8_t *buf) {
         d = (doc_t) {
             .title = "Hi! Let's add photos.",
             .steps = {
-                {1, VIS_QR, wifi_qr, 4, {{"Join this Wi-Fi:", ST_BODY}, {in->ap_ssid, ST_BIG}, {pass_line, ST_BODY}}},
-                {2, VIS_QR, url, 4, {{"Then open:", ST_BODY}, {in->ip, ST_BIG}, {"No internet? That's OK.", ST_EXTRA}}},
+                {1, VIS_QR, wifi_qr, 4, {{"Join this Wi-Fi:", ST_BODY}, {in->ap_ssid, ST_BIG}, {pass_line, ST_BODY}}, "Scan me to join"},
+                {2, VIS_QR, url, 4, {{"Then open:", ST_BODY}, {in->ip, ST_BIG}, {"No internet? That's OK.", ST_EXTRA}}, "Scan me to open settings"},
             },
             .footer = footer_wake,
         };
@@ -281,8 +284,8 @@ bool screen_render(screen_t s, const screen_info_t *in, uint8_t *buf) {
             .title = "Wi-Fi problem",
             .intro = {{t1, ST_RED}},
             .steps = {
-                {1, VIS_QR, wifi_qr, 3, {{t2, ST_BODY}, {pass_line, ST_BODY}}},
-                {2, VIS_QR, url, 3, {{t3, ST_BODY}}},
+                {1, VIS_QR, wifi_qr, 3, {{t2, ST_BODY}, {pass_line, ST_BODY}}, "Scan me to join"},
+                {2, VIS_QR, url, 3, {{t3, ST_BODY}}, "Scan me to open settings"},
             },
             .footer = "Red light off? Press KEY to try again.",
         };
@@ -295,7 +298,7 @@ bool screen_render(screen_t s, const screen_info_t *in, uint8_t *buf) {
             .title = "Ready for photos!",
             .check = true,
             .intro = {{t1, ST_BODY}},
-            .steps = {{0, VIS_QR, url, 5, {{t2, ST_BIG}, {t3, ST_BODY}, {"Photos you add will appear here.", ST_EXTRA}}}},
+            .steps = {{0, VIS_QR, url, 5, {{t2, ST_BIG}, {t3, ST_BODY}, {"Photos you add will appear here.", ST_EXTRA}}, "Scan me to open settings"}},
             .footer = footer_wake,
         };
         break;
@@ -320,7 +323,6 @@ bool screen_render(screen_t s, const screen_info_t *in, uint8_t *buf) {
             d.steps[0] = (step_t) {0, VIS_QR, url, 4, {{t1, ST_BODY}, {t2, ST_BODY}, {t5, ST_BODY}, {t3, ST_BODY}, {card, ST_BODY}, {t4, ST_EXTRA}}, "Scan me to open settings"};
         }
         d.title = "How to reach me";
-        d.brand = true;
         // Start-up screen: say which firmware is running and how an update went, and that photos follow.
         snprintf(fw, sizeof(fw), "Firmware %s", in->fw_version ? in->fw_version : "?");
         if (in->boot && in->update_result)
@@ -361,8 +363,9 @@ bool screen_render(screen_t s, const screen_info_t *in, uint8_t *buf) {
         return false;
     }
 
+    d.brand = true; // the Halcyon Frame mark and name, Fraunces title, proportional Inter text
     // Long network names can push the content into the footer: shrink the QR codes until it fits.
-    int shrink = 0;
+    int shrink = -1;
     while (!layout(&c, &d, false, shrink) && shrink < 3) shrink++; // 3 = 2 px QR modules, tight gaps
     if (!layout(&c, &d, false, shrink)) d.footer = NULL; // last resort: the hint goes, the content stays
     gfx_fill(&c, EPD_WHITE);
