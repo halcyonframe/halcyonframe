@@ -34,6 +34,28 @@ static const char *TAG = "web";
 extern const char index_html_start[] asm("_binary_index_html_start");
 extern const char index_html_end[] asm("_binary_index_html_end");
 
+// Brand files for the page: icons for browsers and phone home screens, the web app manifest, and the wordmark font.
+// Embedded as data (EMBED_TXTFILES adds a NUL after text files, which is not sent).
+#define EMBED(sym) extern const uint8_t sym##_start[] asm("_binary_" #sym "_start"); \
+                   extern const uint8_t sym##_end[] asm("_binary_" #sym "_end");
+EMBED(manifest_webmanifest) EMBED(icon_svg) EMBED(icon_192_png) EMBED(icon_512_png) EMBED(icon_maskable_512_png)
+EMBED(apple_touch_icon_png) EMBED(favicon_png) EMBED(fraunces_brand_woff2)
+static const struct {
+    const char *path, *type;
+    const uint8_t *start, *end;
+    int trim; // 1 for text files: the trailing NUL
+} ASSETS[] = {
+#define ASSET(p, t, sym, trim) {p, t, sym##_start, sym##_end, trim}
+    ASSET("/manifest.webmanifest", "application/manifest+json", manifest_webmanifest, 1),
+    ASSET("/brand/icon.svg", "image/svg+xml", icon_svg, 1),
+    ASSET("/brand/icon-192.png", "image/png", icon_192_png, 0),
+    ASSET("/brand/icon-512.png", "image/png", icon_512_png, 0),
+    ASSET("/brand/icon-maskable-512.png", "image/png", icon_maskable_512_png, 0),
+    ASSET("/brand/apple-touch-icon.png", "image/png", apple_touch_icon_png, 0),
+    ASSET("/brand/fraunces-brand.woff2", "font/woff2", fraunces_brand_woff2, 0),
+    ASSET("/favicon.ico", "image/png", favicon_png, 0), // browsers ask for this path; PNG data is accepted
+};
+
 /* ---- helpers ---- */
 
 // Every state-changing request must carry X-PF. A custom header forces a CORS preflight (which this
@@ -109,9 +131,26 @@ static esp_err_t h_index(httpd_req_t *req) {
     // Everything the page needs comes from the frame itself; this keeps it that way (inline code is ours).
     httpd_resp_set_hdr(req, "Content-Security-Policy",
                        "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
-                       "script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'");
+                       "font-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'");
     // EMBED_TXTFILES appends a NUL terminator; don't send it
     return httpd_resp_send(req, index_html_start, index_html_end - index_html_start - 1);
+}
+
+// GET of one of the brand files above. Only exact paths in the table are served. Doesn't count as activity: a phone
+// fetching its home-screen icon must not keep the frame awake.
+static esp_err_t h_asset(httpd_req_t *req) {
+    char path[64];
+    size_t n = strcspn(req->uri, "?"); // ignore a query string
+    if (n >= sizeof(path)) return send_err(req, "404 Not Found", "not found");
+    memcpy(path, req->uri, n);
+    path[n] = 0;
+    for (size_t i = 0; i < sizeof(ASSETS) / sizeof(ASSETS[0]); i++)
+        if (!strcmp(path, ASSETS[i].path)) {
+            httpd_resp_set_type(req, ASSETS[i].type);
+            httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=86400");
+            return httpd_resp_send(req, (const char *) ASSETS[i].start, ASSETS[i].end - ASSETS[i].start - ASSETS[i].trim);
+        }
+    return send_err(req, "404 Not Found", "not found");
 }
 
 // Deliberately doesn't call app_touch(): the UI polls this, and a forgotten browser tab must not keep the
@@ -550,7 +589,7 @@ static esp_err_t guarded(httpd_req_t *req) {
 void web_start(void) {
     snprintf(boot_host, sizeof(boot_host), "%s", g_cfg.hostname);
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 20;
+    cfg.max_uri_handlers = 24;
     cfg.stack_size = 8192;
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn = httpd_uri_match_wildcard;
@@ -573,6 +612,9 @@ void web_start(void) {
         {.uri = "/api/ota", .method = HTTP_POST, .handler = h_ota},
         {.uri = "/api/time", .method = HTTP_POST, .handler = h_time},
         {.uri = "/api/tz", .method = HTTP_GET, .handler = h_tz},
+        {.uri = "/manifest.webmanifest", .method = HTTP_GET, .handler = h_asset},
+        {.uri = "/favicon.ico", .method = HTTP_GET, .handler = h_asset},
+        {.uri = "/brand/*", .method = HTTP_GET, .handler = h_asset},
         {.uri = "/api/show_status", .method = HTTP_POST, .handler = h_show_status},
         {.uri = "/api/sleep", .method = HTTP_POST, .handler = h_sleep},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = h_reboot},
