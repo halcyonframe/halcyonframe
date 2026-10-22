@@ -341,10 +341,10 @@ static esp_err_t h_settings_get(httpd_req_t *req) {
     size_t o = strlen(buf);
     snprintf(buf + o, sizeof(buf) - o,
              ",\"wifi_pass_set\":%s,\"ap_pass_set\":%s,\"interval_min\":%d,\"awake_min\":%d,"
-             "\"shuffle\":%s,\"rotate180\":%s,\"orientation\":\"%s\",\"status_every\":%d,\"status_min\":%d,"
+             "\"shuffle\":%d,\"rotate180\":%s,\"orientation\":\"%s\",\"status_every\":%d,\"status_min\":%d,"
              "\"key_status\":%s,\"typeface\":%d,\"auto_setup\":%s,\"has_geo\":%s,\"hush\":%s,\"wizard_done\":%s}",
              g_cfg.wifi_pass[0] ? "true" : "false", g_cfg.ap_pass[0] ? "true" : "false", g_cfg.interval_min,
-             g_cfg.awake_min, g_cfg.shuffle ? "true" : "false", g_cfg.rotate180 ? "true" : "false",
+             g_cfg.awake_min, g_cfg.shuffle, g_cfg.rotate180 ? "true" : "false",
              ORIENT_NAMES[g_cfg.orientation], g_cfg.status_every, g_cfg.status_min, g_cfg.key_status ? "true" : "false",
              g_cfg.typeface, g_cfg.auto_setup ? "true" : "false", g_cfg.geo_lat[0] ? "true" : "false",
              g_cfg.hush ? "true" : "false", g_cfg.wizard_done ? "true" : "false");
@@ -385,6 +385,7 @@ static esp_err_t settings_post(httpd_req_t *req) {
     INT_FIELD(status_every) INT_FIELD(status_min) INT_FIELD(key_status) INT_FIELD(typeface) INT_FIELD(auto_setup)
     INT_FIELD(hush) INT_FIELD(wizard_done)
     if (c.typeface >= TYPEFACE_COUNT) c.typeface = 0;
+    if (c.shuffle > ORDER_ADVANCED) c.shuffle = ORDER_SEQUENTIAL;
     // Coordinates are typed by hand outside the US (the ZIP table is US-only); they feed the sun and moon cards.
     if (c.lat[0] || c.lon[0]) {
         char *e1, *e2;

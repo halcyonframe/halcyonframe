@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "screens.h"
+#include "shuffle.h"
 
 #define SD_ROOT      "/sdcard"
 #define PHOTO_DIR    SD_ROOT "/photos"
@@ -18,7 +19,7 @@ typedef struct {
     char hostname[33];
     int interval_min; // slideshow interval; 0 = only change on button/web request
     int awake_min;    // minutes of inactivity before deep sleep while the web UI is up; 0 = never
-    bool shuffle;
+    int shuffle;          // order_mode_t: 0 in order, 1 shuffle (random), 2 advanced shuffle (shown evenly)
     bool rotate180;   // the panel is mounted upside down in the stock frame, so this defaults on
     orient_t orientation; // how the frame hangs; config.txt: landscape | cw (turned right) | ccw (turned left)
     char tz[64];          // POSIX TZ string, e.g. CST6CDT,M3.2.0,M11.1.0 (US Central)
@@ -67,6 +68,13 @@ bool photo_id_valid(const char *id);
 void photo_path(char *out, size_t n, const char *id, const char *ext);
 // Copies sorted photo ids into ids (PHOTO_ID_MAX each); returns the count. ids may be NULL to just count.
 int photo_list(char (*ids)[PHOTO_ID_MAX], int max);
+
+// What the shuffle remembers: /history.txt, one line per photo "id count last" (times shown, play sequence number of
+// the latest showing). A plain text file rather than a database: a few hundred rows, rewritten when the photo changes.
+// history_load fills p[i] for the sorted ids[i] (zero for photos never shown) and returns the highest sequence number.
+// history_record notes that a photo is being shown now.
+int history_load(const char (*ids)[PHOTO_ID_MAX], int n, play_t *p);
+void history_record(const char *id);
 // The browser encodes the orientation a photo was cropped for in its id: "<id>_cw", "<id>_ccw", or no
 // suffix for landscape. The slideshow only shows photos matching the frame's orientation.
 orient_t photo_orient(const char *id);

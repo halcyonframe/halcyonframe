@@ -129,7 +129,7 @@ static void config_defaults(void) {
     unique_name(g_cfg.hostname, sizeof(g_cfg.hostname), "halcyon", false);
     g_cfg.interval_min = 60;
     g_cfg.awake_min = 10;
-    g_cfg.shuffle = false;
+    g_cfg.shuffle = ORDER_SEQUENTIAL;
     g_cfg.rotate180 = true;
     g_cfg.orientation = ORIENT_LANDSCAPE;
     strcpy(g_cfg.tz, "CST6CDT,M3.2.0,M11.1.0");
@@ -178,6 +178,7 @@ void config_load(void) {
                 if (!strcmp(val, ORIENT_NAMES[i])) g_cfg.orientation = (orient_t) i;
     }
     fclose(f);
+    if (g_cfg.shuffle < 0 || g_cfg.shuffle > ORDER_ADVANCED) g_cfg.shuffle = ORDER_SEQUENTIAL;
     if (g_cfg.interval_min < 0) g_cfg.interval_min = 0;
     if (g_cfg.awake_min < 0) g_cfg.awake_min = 0;
     if (g_cfg.status_every != 30 && g_cfg.status_every != 60) g_cfg.status_every = 0;
@@ -294,6 +295,61 @@ int photo_list(char (*ids)[PHOTO_ID_MAX], int max) {
     closedir(d);
     if (ids) qsort(ids, n, PHOTO_ID_MAX, cmp_id);
     return n;
+}
+
+/* ---- play history (the shuffle's memory) ---- */
+
+#define HISTORY_PATH SD_ROOT "/history.txt"
+
+int history_load(const char (*ids)[PHOTO_ID_MAX], int n, play_t *p) {
+    memset(p, 0, n * sizeof(play_t));
+    struct stat st;
+    // history_record() replaces the file by unlinking then renaming; finish an interrupted save.
+    if (card && stat(HISTORY_PATH, &st) != 0 && stat(HISTORY_PATH ".tmp", &st) == 0) rename(HISTORY_PATH ".tmp", HISTORY_PATH);
+    FILE *f = card ? fopen(HISTORY_PATH, "r") : NULL;
+    if (!f) return 0;
+    char line[96];
+    uint32_t newest = 0;
+    while (fgets(line, sizeof(line), f)) {
+        char id[PHOTO_ID_MAX];
+        unsigned count, last;
+        if (sscanf(line, "%32s %u %u", id, &count, &last) != 3) continue; // a torn last line is just skipped
+        const char *hit = bsearch(id, ids, n, PHOTO_ID_MAX, cmp_id);
+        if (!hit) continue; // the photo was deleted
+        play_t *e = &p[(hit - (const char *) ids) / PHOTO_ID_MAX];
+        e->count = count, e->last = last;
+        if (last > newest) newest = last;
+    }
+    fclose(f);
+    return newest;
+}
+
+void history_record(const char *id) {
+    if (!card) return;
+    char (*ids)[PHOTO_ID_MAX] = heap_caps_malloc(PHOTO_MAX * PHOTO_ID_MAX, MALLOC_CAP_SPIRAM);
+    play_t *p = heap_caps_malloc(PHOTO_MAX * sizeof(play_t), MALLOC_CAP_SPIRAM);
+    if (!ids || !p) goto out;
+    int n = photo_list(ids, PHOTO_MAX);
+    uint32_t newest = history_load(ids, n, p);
+    const char *hit = bsearch(id, ids, n, PHOTO_ID_MAX, cmp_id);
+    if (!hit) goto out;
+    play_t *e = &p[(hit - (const char *) ids) / PHOTO_ID_MAX];
+    e->count++, e->last = newest + 1;
+    storage_write_begin(); // deep sleep waits for the write to finish
+    FILE *f = fopen(HISTORY_PATH ".tmp", "w");
+    if (f) {
+        for (int i = 0; i < n; i++) // only photos that exist, so the file doesn't collect rows for deleted ones
+            if (p[i].count) fprintf(f, "%s %u %u\n", ids[i], (unsigned) p[i].count, (unsigned) p[i].last);
+        bool ok = fclose(f) == 0;
+        if (ok) {
+            unlink(HISTORY_PATH);
+            rename(HISTORY_PATH ".tmp", HISTORY_PATH);
+        }
+    }
+    storage_write_end();
+out:
+    heap_caps_free(ids);
+    heap_caps_free(p);
 }
 
 orient_t photo_orient(const char *id) {

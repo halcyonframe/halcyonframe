@@ -11,11 +11,13 @@
 #include "wifi.h"
 #include <stdatomic.h>
 #include <string.h>
+#include <time.h>
 #include "driver/gpio.h"
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -74,6 +76,7 @@ bool display_show(const char *id) {
         ESP_LOGI(TAG, "showing %s", id);
         if (pmic_battery_level() == BATT_LOW) screen_badge(frame, photo_orient(id));
         present();
+        history_record(id);
         shown_screen = SCR_NONE;
     } else {
         ESP_LOGE(TAG, "could not load %s (missing or wrong size)", id);
@@ -89,16 +92,20 @@ bool display_next(void) {
     int all = photo_list(ids, PHOTO_MAX), n = 0;
     for (int i = 0; i < all; i++)
         if (photo_orient(ids[i]) == g_cfg.orientation) memmove(ids[n++], ids[i], PHOTO_ID_MAX);
+    play_t *play = heap_caps_malloc((n ? n : 1) * sizeof(play_t), MALLOC_CAP_SPIRAM);
+    assert(play);
+    history_load((const char (*)[PHOTO_ID_MAX]) ids, n, play);
     bool ok = false;
     for (int attempt = 0; attempt < MAX_BAD_TRIES && attempt < n && !ok; attempt++) {
-        int cur = -1, pick;
+        int cur = -1;
         for (int i = 0; i < n; i++)
             if (!strcmp(ids[i], current_id)) cur = i;
-        if (n == 1) pick = 0;
-        else if (g_cfg.shuffle) do pick = esp_random() % n; while (pick == cur);
-        else pick = (cur + 1) % n; // cur is -1 when the current photo was deleted: restart at the first
+        // The hardware random numbers are only partly random while Wi-Fi is off, so mix in the clock too.
+        uint32_t entropy = esp_random() ^ (uint32_t) time(NULL) * 2246822519u ^ (uint32_t) esp_timer_get_time();
+        int pick = shuffle_pick(g_cfg.shuffle, n, play, cur, entropy);
         ok = display_show(ids[pick]);
     }
+    heap_caps_free(play);
     heap_caps_free(ids);
     if (!n) ESP_LOGW(TAG, "no photos for this orientation");
     return ok;

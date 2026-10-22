@@ -220,7 +220,13 @@ dialog h2 { margin-top: 0; }
       <label>Hostname (http://name.local; changing it changes the frame's address)<input type="text" name="hostname" maxlength="32" pattern="[A-Za-z0-9\-]+" required></label>
       <label>Change photo every (minutes, 0 = never)<input type="number" name="interval_min" min="0" max="10080"></label>
       <label>Sleep after inactivity (minutes, 0 = never)<input type="number" name="awake_min" min="0" max="1440"></label>
-      <label class="check" style="display:flex;gap:6px;align-items:center;color:var(--fg)"><input type="checkbox" name="shuffle"> Shuffle</label>
+      <label>Photo order
+        <select name="shuffle">
+          <option value="0">In order (the order you added them)</option>
+          <option value="1">Shuffle (random each time; a photo can come round again soon)</option>
+          <option value="2">Advanced shuffle (every photo as often as every other, spread out evenly)</option>
+        </select>
+      </label>
       <label class="check" style="display:flex;gap:6px;align-items:center;color:var(--fg)"><input type="checkbox" name="rotate180"> Panel mounted upside down (stock frame)</label>
     </form>
     <div class="row" style="margin-top:12px">
@@ -911,7 +917,7 @@ async function loadSettings() {
   await detectP;
   wzSettings = s;
   for (const k of ['wifi_ssid', 'ap_ssid', 'hostname', 'interval_min', 'awake_min']) form[k].value = s[k];
-  form.shuffle.checked = s.shuffle;
+  form.shuffle.value = s.shuffle;
   form.rotate180.checked = s.rotate180;
   form.orientation.value = s.orientation;
   for (const k of ['typeface', 'status_every', 'status_min', 'change_times', 'quiet_start', 'quiet_end', 'temp_unit', 'ntp_server', 'zip'])
@@ -981,7 +987,7 @@ $('#btnSave').onclick = async () => {
   if (!form.reportValidity()) return;
   const body = new URLSearchParams();
   for (const k of ['wifi_ssid', 'ap_ssid', 'hostname', 'interval_min', 'awake_min']) body.set(k, form[k].value.trim());
-  body.set('shuffle', form.shuffle.checked ? 1 : 0);
+  body.set('shuffle', form.shuffle.value);
   body.set('rotate180', form.rotate180.checked ? 1 : 0);
   body.set('orientation', form.orientation.value);
   for (const k of ['typeface', 'status_every', 'status_min', 'key_status', 'change_times', 'quiet_start', 'quiet_end', 'temp_unit', 'ntp_server', 'tz', 'zip'])
